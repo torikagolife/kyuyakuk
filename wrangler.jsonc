@@ -1,0 +1,14 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "kyuyakuk",
+  "compatibility_date": "2026-05-11",
+  "observability": {
+    "enabled": true
+  },
+  "assets": {
+    "directory": "pages"
+  },
+  "compatibility_flags": [
+    "nodejs_compat"
+  ]
+}
