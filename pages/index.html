@@ -22,6 +22,13 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 #btnDownload:hover{color:var(--text);border-color:var(--accent);}
 .main{padding:12px;max-width:840px;margin:0 auto;display:flex;flex-direction:column;gap:10px;}
 
+/* PROCEDURE TABS */
+.proc-wrap{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;margin-bottom:2px;}
+.proc-wrap h3{font-size:12px;color:var(--muted);margin-bottom:8px;}
+.proc-tabs{display:flex;gap:6px;}
+.proc-btn{flex:1;padding:12px 4px;border-radius:8px;border:1px solid var(--bord2);background:#070d1a;color:var(--muted);font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;transition:all .2s;text-align:center;line-height:1.3;}
+.proc-btn.active{background:var(--accent);color:#fff;border-color:var(--acc2);box-shadow:0 0 10px rgba(14,165,233,.2);}
+
 /* TABS */
 .tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;}
 .tab-btn{padding:9px;border-radius:7px;border:none;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--muted);transition:all .2s;}
@@ -232,6 +239,16 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 
 <div class="main">
 
+  <!-- PROCEDURE TABS -->
+  <div class="proc-wrap">
+    <h3>🔪 予定術式・処置を選択</h3>
+    <div class="proc-tabs">
+      <button class="proc-btn active" onclick="switchProc('emr')">ポリープ切除<br>EMR</button>
+      <button class="proc-btn" onclick="switchProc('esd')">ESD</button>
+      <button class="proc-btn" onclick="switchProc('ercp')">ERCP</button>
+    </div>
+  </div>
+
   <!-- TABS -->
   <div class="tabs">
     <button class="tab-btn active" id="tabVideo" onclick="switchMode('video')">📹 カメラスキャン</button>
@@ -435,6 +452,7 @@ const ALERT_COOLDOWN_MS = 4000;
 let stream=null, scanning=false, worker=null, workerReady=false;
 let scanTimer=null, lastAlertAt=0, currentMode='video';
 let captureQueue=[], imageFiles=[], qIdSeed=0, iIdSeed=0;
+let currentProc = 'emr'; // 初期状態はポリープ切除・EMR
 
 const video=document.getElementById('video'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
 const hudDot=document.getElementById('hudDot'), hudLabel=document.getElementById('hudLabel'), hudBadge=document.getElementById('hudBadge');
@@ -576,6 +594,14 @@ async function initWorker(){
     };
     msg.insertAdjacentElement('afterend', btn);
   }
+}
+
+/* 術式切り替え */
+function switchProc(proc){
+  currentProc = proc;
+  document.querySelectorAll('.proc-btn').forEach(b => b.classList.remove('active'));
+  document.querySelector(`.proc-btn[onclick="switchProc('${proc}')"]`).classList.add('active');
+  if(summaryMap.size > 0) renderSummary();
 }
 
 /* モード */
@@ -949,50 +975,50 @@ function showVisualCheckWarning(source, confidence){
    summaryMap: { 正規化薬剤名 → {name, category, restPeriod, note, sources:Set, count} }
    ================================================ */
 
-// 休薬期間DB（PDFから）
+// 休薬期間DB（術式ごとの期間 periods: { emr, esd, ercp } を設定）
 const DRUG_DB = [
   // 抗血小板薬
-  {keys:['バイアスピリン','アスピリン'],          cat:'抗血小板薬', period:'7日',      note:''},
-  {keys:['バファリン配合錠','ニトギス','バッサミン','ファモター'], cat:'抗血小板薬', period:'7日', note:'販売中止予定含む'},
-  {keys:['タケルダ配合錠'],                       cat:'抗血小板薬', period:'7日',      note:''},
-  {keys:['キャブピリン配合錠'],                   cat:'抗血小板薬', period:'7日',      note:''},
-  {keys:['パナルジン','チクロピジン'],             cat:'抗血小板薬', period:'10〜14日', note:'当院規定10〜14日'},
-  {keys:['プラビックス','クロピドグレル'],         cat:'抗血小板薬', period:'14日',     note:'当院規定10〜14日'},
-  {keys:['コンプラビン配合錠','ロレアス配合錠'],   cat:'抗血小板薬', period:'14日',     note:'処方元に確認'},
-  {keys:['エフィエント','プラスグレル'],           cat:'抗血小板薬', period:'14日',     note:'PCI適応 処方元に確認'},
-  {keys:['ブリリンタ','チカグレロル'],             cat:'抗血小板薬', period:'5日',      note:'PCI適応 処方元に確認'},
-  {keys:['プレタール','シロスタゾール'],           cat:'抗血小板薬', period:'3日',      note:'当院規定2〜4日'},
-  {keys:['アンプラーグ','サルポグレラート'],       cat:'抗血小板薬', period:'1日',      note:'当院規定1〜2日'},
+  {keys:['バイアスピリン','アスピリン'],          cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'3〜5日', ercp:'3〜5日'},      note:'※目安。院内規定に調整してください'},
+  {keys:['バファリン配合錠','ニトギス','バッサミン','ファモター'], cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'7日', ercp:'7日'}, note:'販売中止予定含む'},
+  {keys:['タケルダ配合錠'],                       cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'7日', ercp:'7日'},      note:''},
+  {keys:['キャブピリン配合錠'],                   cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'7日', ercp:'7日'},      note:''},
+  {keys:['パナルジン','チクロピジン'],             cat:'抗血小板薬', periods:{emr:'10〜14日', esd:'10〜14日', ercp:'10〜14日'}, note:'当院規定10〜14日'},
+  {keys:['プラビックス','クロピドグレル'],         cat:'抗血小板薬', periods:{emr:'休薬不要(アスピリン置換)', esd:'14日', ercp:'14日'},     note:'当院規定10〜14日'},
+  {keys:['コンプラビン配合錠','ロレアス配合錠'],   cat:'抗血小板薬', periods:{emr:'処方元確認', esd:'14日', ercp:'14日'},      note:'処方元に確認'},
+  {keys:['エフィエント','プラスグレル'],           cat:'抗血小板薬', periods:{emr:'14日', esd:'14日', ercp:'14日'},      note:'PCI適応 処方元に確認'},
+  {keys:['ブリリンタ','チカグレロル'],             cat:'抗血小板薬', periods:{emr:'5日', esd:'5日', ercp:'5日'},       note:'PCI適応 処方元に確認'},
+  {keys:['プレタール','シロスタゾール'],           cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'3日', ercp:'3日'},       note:'当院規定2〜4日'},
+  {keys:['アンプラーグ','サルポグレラート'],       cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'1日', ercp:'1日'},       note:'当院規定1〜2日'},
   // 抗凝固薬
-  {keys:['ワーファリン','ワルファリン'],           cat:'抗凝固薬',   period:'5日',      note:''},
-  {keys:['プラザキサ','ダビガトラン'],             cat:'抗凝固薬',   period:'1〜2日',   note:'CCr≦50は2日'},
-  {keys:['イグザレルト','リバーロキサバン'],       cat:'抗凝固薬',   period:'1日',      note:'当院規定2〜4日'},
-  {keys:['エリキュース','アピキサバン'],           cat:'抗凝固薬',   period:'1〜2日',   note:''},
-  {keys:['リクシアナ','エドキサバン'],             cat:'抗凝固薬',   period:'1日',      note:''},
+  {keys:['ワーファリン','ワルファリン'],           cat:'抗凝固薬',   periods:{emr:'休薬不要(PT-INR内)', esd:'5日(ヘパリン置換)', ercp:'5日(ヘパリン置換)'},      note:''},
+  {keys:['プラザキサ','ダビガトラン'],             cat:'抗凝固薬',   periods:{emr:'1日(当日朝休薬)', esd:'1〜2日', ercp:'1〜2日'},   note:'CCr≦50は2日'},
+  {keys:['イグザレルト','リバーロキサバン'],       cat:'抗凝固薬',   periods:{emr:'1日(当日朝休薬)', esd:'1日', ercp:'1日'},      note:'当院規定2〜4日'},
+  {keys:['エリキュース','アピキサバン'],           cat:'抗凝固薬',   periods:{emr:'1日(当日朝休薬)', esd:'1〜2日', ercp:'1〜2日'},   note:''},
+  {keys:['リクシアナ','エドキサバン'],             cat:'抗凝固薬',   periods:{emr:'1日(当日朝休薬)', esd:'1日', ercp:'1日'},      note:''},
   // プロスタグランジン製剤
-  {keys:['ドルナー','プロサイリン','ベラプロスト']  ,cat:'PG製剤',   period:'1日',      note:''},
-  {keys:['ケアロード','ベラサス'],                 cat:'PG製剤',     period:'1日',      note:'処方元に確認（肺高血圧症）'},
-  {keys:['ウプトラビ','セレキシパグ'],             cat:'PG製剤',     period:'規定なし', note:'処方元に確認'},
+  {keys:['ドルナー','プロサイリン','ベラプロスト']  ,cat:'PG製剤',   periods:{emr:'1日', esd:'1日', ercp:'1日'},      note:''},
+  {keys:['ケアロード','ベラサス'],                 cat:'PG製剤',     periods:{emr:'1日', esd:'1日', ercp:'1日'},      note:'処方元に確認（肺高血圧症）'},
+  {keys:['ウプトラビ','セレキシパグ'],             cat:'PG製剤',     periods:{emr:'規定なし', esd:'規定なし', ercp:'規定なし'}, note:'処方元に確認'},
   // EPA製剤
-  {keys:['エパデール','イコサペント酸エチル'],     cat:'EPA製剤',    period:'7〜10日',  note:''},
-  {keys:['ロトリガ'],                              cat:'EPA製剤',    period:'規定なし', note:'休薬時はエパデールに準ずる'},
+  {keys:['エパデール','イコサペント酸エチル'],     cat:'EPA製剤',    periods:{emr:'休薬不要(継続)', esd:'7〜10日', ercp:'7〜10日'},  note:''},
+  {keys:['ロトリガ'],                              cat:'EPA製剤',    periods:{emr:'休薬不要(継続)', esd:'規定なし', ercp:'規定なし'}, note:'休薬時はエパデールに準ずる'},
   // 血管拡張薬
-  {keys:['オパルモン','リマプロスト'],             cat:'血管拡張薬', period:'1日',      note:''},
+  {keys:['オパルモン','リマプロスト'],             cat:'血管拡張薬', periods:{emr:'1日', esd:'1日', ercp:'1日'},      note:''},
   // 冠血管拡張薬
-  {keys:['ペルサンチン','ジピリダモール'],         cat:'冠血管拡張薬',period:'1〜1.5日',note:'当院規定1〜2日'},
-  {keys:['コメリアン','ジラゼプ'],                 cat:'冠血管拡張薬',period:'2〜3日',  note:''},
-  {keys:['ロコルナール','トラピジル'],             cat:'冠血管拡張薬',period:'1〜2日',  note:''},
-  {keys:['バスタレルフ','トリメタジジン'],         cat:'冠血管拡張薬',period:'規定なし',note:'半減期からの目安3日'},
+  {keys:['ペルサンチン','ジピリダモール'],         cat:'冠血管拡張薬',periods:{emr:'1〜1.5日', esd:'1〜1.5日', ercp:'1〜1.5日'},note:'当院規定1〜2日'},
+  {keys:['コメリアン','ジラゼプ'],                 cat:'冠血管拡張薬',periods:{emr:'2〜3日', esd:'2〜3日', ercp:'2〜3日'},  note:''},
+  {keys:['ロコルナール','トラピジル'],             cat:'冠血管拡張薬',periods:{emr:'1〜2日', esd:'1〜2日', ercp:'1〜2日'},  note:''},
+  {keys:['バスタレルフ','トリメタジジン'],         cat:'冠血管拡張薬',periods:{emr:'規定なし', esd:'規定なし', ercp:'規定なし'},note:'半減期からの目安3日'},
   // 脳代謝改善薬
-  {keys:['ケタス','イブジラスト'],                 cat:'脳代謝改善薬',period:'なし(3日)',note:''},
-  {keys:['セロクラール','イフェンプロジル'],       cat:'脳代謝改善薬',period:'1〜2日',  note:''},
+  {keys:['ケタス','イブジラスト'],                 cat:'脳代謝改善薬',periods:{emr:'なし(3日)', esd:'なし(3日)', ercp:'なし(3日)'},note:''},
+  {keys:['セロクラール','イフェンプロジル'],       cat:'脳代謝改善薬',periods:{emr:'1〜2日', esd:'1〜2日', ercp:'1〜2日'},  note:''},
   // 飲酒量低減薬
-  {keys:['セリンクロ','ナルメフェン'],             cat:'飲酒量低減薬',period:'7日',     note:'フェンタニル注と併用禁忌'},
+  {keys:['セリンクロ','ナルメフェン'],             cat:'飲酒量低減薬',periods:{emr:'7日', esd:'7日', ercp:'7日'},      note:'フェンタニル注と併用禁忌'},
   // 女性ホルモン製剤
-  {keys:['ヤーズフレックス配合錠','ヤーズ配合錠','ドロエチ配合錠','アリッサ配合錠'], cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
-  {keys:['ルナベル配合錠','フリウェル配合錠','ジェミーナ配合錠'],                    cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
-  {keys:['アンジュ','トリキュラー','ラベルフィーユ'],                                cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
-  {keys:['マーベロン','ファボワール','シンフェーズ'],                                 cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
+  {keys:['ヤーズフレックス配合錠','ヤーズ配合錠','ドロエチ配合錠','アリッサ配合錠'], cat:'女性ホルモン製剤', periods:{emr:'術前4週・術後2週', esd:'術前4週・術後2週', ercp:'術前4週・術後2週'}, note:'血栓症リスク'},
+  {keys:['ルナベル配合錠','フリウェル配合錠','ジェミーナ配合錠'],                    cat:'女性ホルモン製剤', periods:{emr:'術前4週・術後2週', esd:'術前4週・術後2週', ercp:'術前4週・術後2週'}, note:'血栓症リスク'},
+  {keys:['アンジュ','トリキュラー','ラベルフィーユ'],                                cat:'女性ホルモン製剤', periods:{emr:'術前4週・術後2週', esd:'術前4週・術後2週', ercp:'術前4週・術後2週'}, note:'血栓症リスク'},
+  {keys:['マーベロン','ファボワール','シンフェーズ'],                                 cat:'女性ホルモン製剤', periods:{emr:'術前4週・術後2週', esd:'術前4週・術後2週', ercp:'術前4週・術後2週'}, note:'血栓症リスク'},
 ];
 
 // 薬剤名→DBエントリを引く
@@ -1071,7 +1097,8 @@ function renderSummary(){
     }
     const tr = document.createElement('tr');
     const srcs = [...rec.sources].map(s=>`<span class="src-tag hit">${s}</span>`).join('');
-    const period = rec.entry?.period || '—';
+    // 選択された術式に応じた期間を取得
+    const period = rec.entry?.periods?.[currentProc] || '—';
     const note   = rec.entry?.note   || '';
     tr.innerHTML = `
       <td class="drug-name-cell">${rec.displayName}<div class="drug-cat">${cat}</div></td>
@@ -1096,7 +1123,7 @@ function exportSummaryCSV(){
     if(ai!==bi)return(ai<0?99:ai)-(bi<0?99:bi);
     return a.displayName.localeCompare(b.displayName,'ja');
   });
-  const rows=sorted.map(r=>`"${r.displayName}","${r.entry?.cat||''}","${r.entry?.period||''}","${r.entry?.note||''}","${r.count}","${[...r.sources].join('/')}"`);
+  const rows=sorted.map(r=>`"${r.displayName}","${r.entry?.cat||''}","${r.entry?.periods?.[currentProc]||''}","${r.entry?.note||''}","${r.count}","${[...r.sources].join('/')}"`);
   const csv='\ufeff薬品名,分類,休薬期間目安,備考,検出回数,検出元\n'+rows.join('\n');
   const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`休薬指導一覧-${new Date().toISOString().slice(0,10)}.csv`});
   a.click();URL.revokeObjectURL(a.href);
