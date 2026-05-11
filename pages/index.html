@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+<title>休薬スキャナー</title>
+<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@400;700;900&display=swap');
+:root {
+  --bg:#070d1a; --panel:#0d1829; --border:#1a2d4a; --bord2:#243d5c;
+  --accent:#0ea5e9; --acc2:#38bdf8; --danger:#ef4444; --ok:#22c55e;
+  --text:#e0eeff; --muted:#4a6a8a;
+  --mono:'JetBrains Mono',monospace; --sans:'Noto Sans JP',sans-serif;
+}
+*{box-sizing:border-box;margin:0;padding:0;}
+body{background:var(--bg);color:var(--text);font-family:var(--sans);min-height:100vh;}
+header{background:#0d1829;border-bottom:1px solid var(--border);padding:10px 14px;display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:100;}
+header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing:.05em;}
+.badge{background:var(--danger);color:#fff;font-size:9px;font-family:var(--mono);padding:2px 7px;border-radius:3px;}
+#btnDownload{background:transparent;color:var(--muted);border:1px solid var(--bord2);padding:5px 10px;border-radius:6px;font-size:11px;cursor:pointer;font-family:var(--sans);transition:all .2s;}
+#btnDownload:hover{color:var(--text);border-color:var(--accent);}
+.main{padding:12px;max-width:840px;margin:0 auto;display:flex;flex-direction:column;gap:10px;}
+
+/* TABS */
+.tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;}
+.tab-btn{padding:9px;border-radius:7px;border:none;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--muted);transition:all .2s;}
+.tab-btn.active{background:var(--bord2);color:var(--text);}
+
+/* INIT OVERLAY */
+#initOverlay{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;}
+.spin{width:40px;height:40px;border:3px solid var(--bord2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
+#initMsg{font-size:13px;color:var(--muted);}
+.init-bar-bg{width:200px;height:3px;background:var(--border);border-radius:2px;}
+.init-bar-fill{height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width .3s;}
+
+/* CAMERA */
+.camera-wrap{position:relative;border-radius:12px;overflow:hidden;background:#000;border:1px solid var(--border);aspect-ratio:16/9;}
+#video{width:100%;height:100%;object-fit:cover;display:block;}
+#canvas{display:none;}
+.scan-guide{position:absolute;inset:12% 10%;border:2px solid rgba(14,165,233,.6);border-radius:8px;pointer-events:none;display:none;}
+.scan-guide::before,.scan-guide::after{content:'';position:absolute;width:20px;height:20px;border-color:var(--accent);border-style:solid;}
+.scan-guide::before{top:-2px;left:-2px;border-width:3px 0 0 3px;}
+.scan-guide::after{bottom:-2px;right:-2px;border-width:0 3px 3px 0;}
+.scan-line{position:absolute;top:0;left:0;right:0;height:2px;background:linear-gradient(90deg,transparent,var(--accent),transparent);animation:scanAnim 2s ease-in-out infinite;display:none;}
+@keyframes scanAnim{0%,100%{top:12%}50%{top:88%}}
+.cam-hud{position:absolute;top:0;left:0;right:0;padding:8px 12px;display:flex;align-items:center;gap:8px;background:linear-gradient(to bottom,rgba(0,0,0,.72) 0%,transparent 100%);pointer-events:none;}
+.hud-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;}
+.hud-dot.active{background:var(--accent);animation:pulse .9s infinite;}
+.hud-dot.ok{background:var(--ok);}
+.hud-dot.alert{background:var(--danger);animation:pulse .4s infinite;}
+.hud-dot.warn{background:var(--warn);animation:pulse .7s infinite;}
+.hud-label{font-size:11px;font-family:var(--mono);color:rgba(255,255,255,.8);flex:1;}
+.hud-badge{font-size:10px;font-family:var(--mono);color:rgba(255,255,255,.6);background:rgba(0,0,0,.45);padding:2px 7px;border-radius:4px;}
+.cam-bottom{position:absolute;bottom:0;left:0;right:0;padding:10px 14px;display:none;align-items:center;justify-content:space-between;gap:8px;background:linear-gradient(to top,rgba(0,0,0,.72) 0%,transparent 100%);}
+.shutter-btn{width:58px;height:58px;border-radius:50%;border:3px solid rgba(255,255,255,.8);background:rgba(255,255,255,.15);cursor:pointer;transition:all .15s;position:relative;flex-shrink:0;}
+.shutter-btn::after{content:'';position:absolute;inset:5px;border-radius:50%;background:#fff;opacity:.9;}
+.shutter-btn:hover{transform:scale(1.08);}
+.shutter-btn:active{transform:scale(.95);}
+.shutter-btn:disabled{opacity:.3;cursor:not-allowed;transform:none;}
+.q-counter{background:var(--danger);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:10px;min-width:22px;text-align:center;}
+.q-counter.zero{background:var(--bord2);color:var(--muted);}
+.cam-info{font-size:11px;color:rgba(255,255,255,.45);font-family:var(--mono);}
+
+/* VIDEO CONTROLS */
+.vid-ctrl{display:flex;gap:8px;}
+.vc{flex:1;padding:11px;border-radius:8px;border:none;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;}
+.vc-start{background:var(--accent);color:#fff;}
+.vc-start:hover:not(:disabled){background:#0284c7;}
+.vc-start:disabled{background:#0a2540;color:var(--muted);cursor:not-allowed;}
+.vc-stop{background:var(--bord2);color:var(--muted);}
+.vc-stop:hover{color:var(--text);}
+
+/* QUEUE */
+.queue-panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;overflow:hidden;}
+.queue-head{display:flex;align-items:center;gap:8px;padding:8px 12px;border-bottom:1px solid var(--border);}
+.queue-head h3{font-size:12px;color:var(--muted);flex:1;margin:0;}
+.q-btn{padding:5px 12px;border-radius:6px;border:none;font-family:var(--sans);font-size:12px;font-weight:700;cursor:pointer;transition:all .2s;}
+.q-btn-scan{background:var(--accent);color:#fff;}
+.q-btn-scan:hover:not(:disabled){background:#0284c7;}
+.q-btn-scan:disabled{background:#0a2540;color:var(--muted);cursor:not-allowed;}
+.q-btn-clear{background:transparent;color:var(--muted);border:1px solid var(--border);}
+.q-btn-clear:hover{color:var(--danger);border-color:var(--danger);}
+.queue-scroll{display:flex;gap:8px;padding:10px;overflow-x:auto;min-height:82px;align-items:center;}
+.queue-scroll::-webkit-scrollbar{height:4px;}
+.queue-scroll::-webkit-scrollbar-thumb{background:var(--bord2);border-radius:2px;}
+.q-empty{flex:1;text-align:center;font-size:12px;color:var(--muted);}
+.thumb{position:relative;flex-shrink:0;border-radius:6px;overflow:hidden;border:1px solid var(--bord2);cursor:pointer;}
+.thumb img{width:82px;height:62px;object-fit:cover;display:block;}
+.thumb-n{position:absolute;top:2px;left:3px;font-size:9px;font-family:var(--mono);color:#fff;text-shadow:0 1px 3px rgba(0,0,0,.8);}
+.thumb-del{position:absolute;top:1px;right:1px;width:16px;height:16px;border-radius:50%;background:rgba(239,68,68,.85);color:#fff;font-size:9px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.thumb.scanned{border-color:var(--ok);}
+.thumb.scanned::after{content:'✓';position:absolute;bottom:2px;right:4px;font-size:11px;color:var(--ok);font-weight:700;text-shadow:0 1px 3px rgba(0,0,0,.8);}
+
+/* IMAGE MODE */
+.drop-zone{border:2px dashed var(--bord2);border-radius:12px;background:var(--panel);min-height:160px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;cursor:pointer;transition:all .2s;padding:20px;text-align:center;}
+.drop-zone:hover,.drop-zone.dragover{border-color:var(--accent);background:#0a1d2e;}
+.drop-zone .di{font-size:34px;}
+.drop-zone p{font-size:13px;color:var(--muted);}
+.drop-zone small{font-size:11px;color:#2a4a6a;}
+#fileInput{display:none;}
+.img-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(110px,1fr));gap:8px;}
+.img-cell{position:relative;border-radius:8px;overflow:hidden;border:1px solid var(--bord2);aspect-ratio:4/3;background:#000;cursor:pointer;}
+.img-cell img{width:100%;height:100%;object-fit:cover;display:block;}
+.img-cell-del{position:absolute;top:3px;right:3px;width:18px;height:18px;border-radius:50%;background:rgba(239,68,68,.9);color:#fff;font-size:10px;border:none;cursor:pointer;display:flex;align-items:center;justify-content:center;}
+.img-cell.scanned{border-color:var(--ok);}
+.img-ctrl{display:flex;gap:8px;flex-wrap:wrap;}
+.ib{padding:10px 14px;border-radius:8px;border:none;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;transition:all .2s;}
+.ib-add{background:var(--bord2);color:var(--text);}
+.ib-add:hover{background:#2d4f72;}
+.ib-scan{background:var(--ok);color:#fff;flex:1;}
+.ib-scan:hover:not(:disabled){background:#16a34a;}
+.ib-scan:disabled{background:#0a2a14;color:var(--muted);cursor:not-allowed;}
+.ib-clr{background:transparent;color:var(--muted);border:1px solid var(--border);}
+.ib-clr:hover{color:var(--danger);border-color:var(--danger);}
+.prog-wrap{background:var(--panel);border:1px solid var(--border);border-radius:8px;padding:10px 14px;display:none;}
+.prog-wrap.on{display:block;}
+.prog-label{font-size:12px;color:var(--muted);margin-bottom:6px;}
+.prog-bg{height:4px;background:var(--border);border-radius:2px;overflow:hidden;}
+.prog-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent),var(--acc2));border-radius:2px;transition:width .3s;}
+
+/* ALERT */
+#alertBanner{display:none;background:linear-gradient(135deg,#4a0d0d,#2d0808);border:1px solid var(--danger);border-radius:10px;padding:12px 14px;animation:shake .4s ease;}
+#alertBanner h2{color:#fca5a5;font-size:14px;margin-bottom:8px;}
+#alertDrugs{display:flex;flex-wrap:wrap;gap:6px;}
+.dtag{background:var(--danger);color:#fff;padding:3px 10px;border-radius:20px;font-size:12px;font-weight:700;}
+
+/* SUMMARY PANEL */
+.summary-panel{background:var(--panel);border:1px solid var(--bord2);border-radius:10px;overflow:hidden;}
+.summary-head{display:flex;align-items:center;gap:8px;padding:10px 12px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,#0d1f35,#0d1829);}
+.summary-head h3{flex:1;font-size:13px;font-weight:900;color:var(--acc2);margin:0;letter-spacing:.03em;}
+.sum-count{background:var(--danger);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:10px;min-width:22px;text-align:center;}
+.sum-count.zero{background:var(--bord2);color:var(--muted);}
+.sbtn{padding:4px 10px;border-radius:5px;border:none;font-family:var(--sans);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;}
+.sbtn-csv{background:#0a2540;color:#93c5fd;border:1px solid #3b82f6;}
+.sbtn-csv:hover{background:#1d4ed8;color:#fff;}
+.sbtn-clear{background:transparent;color:var(--muted);border:1px solid var(--border);}
+.sbtn-clear:hover{color:var(--danger);border-color:var(--danger);}
+.sum-empty{padding:24px;text-align:center;font-size:12px;color:var(--muted);}
+.sum-table{width:100%;border-collapse:collapse;font-size:12px;}
+.sum-table thead th{background:#0a1829;color:var(--muted);font-size:10px;font-weight:700;padding:7px 10px;text-align:left;border-bottom:1px solid var(--border);letter-spacing:.05em;}
+.sum-table tbody tr{border-bottom:1px solid var(--border);transition:background .15s;}
+.sum-table tbody tr:hover{background:rgba(14,165,233,.06);}
+.sum-table tbody tr:last-child{border-bottom:none;}
+.sum-table td{padding:8px 10px;vertical-align:middle;}
+.td-drug{font-weight:700;color:var(--text);}
+.td-drug .drug-cat{display:block;font-size:9px;font-weight:400;color:var(--muted);margin-top:1px;font-family:var(--mono);}
+.td-period{font-family:var(--mono);font-size:11px;color:var(--warn);}
+.td-period.none{color:var(--muted);}
+.td-count{text-align:center;}
+.count-badge{display:inline-block;background:var(--danger);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 7px;border-radius:10px;min-width:20px;text-align:center;}
+.count-badge.one{background:var(--bord2);color:var(--muted);}
+.td-sources{font-size:10px;color:var(--muted);font-family:var(--mono);}
+.src-tag{display:inline-block;background:#0a1829;border:1px solid var(--border);padding:1px 5px;border-radius:3px;margin:1px 2px 1px 0;}
+
+/* DRUG LIST */
+.panel{background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:12px;}
+.panel h3{font-size:12px;color:var(--muted);margin-bottom:8px;}
+#drugListArea{width:100%;min-height:80px;background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:13px;font-family:var(--sans);padding:9px;resize:vertical;}
+.hint{font-size:10px;color:var(--muted);margin-top:5px;}
+
+/* LOG */
+.log-head{display:flex;align-items:center;gap:6px;margin-bottom:8px;}
+.log-head h3{flex:1;font-size:12px;color:var(--muted);margin:0;}
+.lbtn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:3px 9px;border-radius:5px;font-size:10px;font-family:var(--sans);cursor:pointer;transition:all .15s;}
+.lbtn:hover{color:var(--text);border-color:var(--bord2);}
+#logArea{font-size:11px;font-family:var(--mono);max-height:240px;overflow-y:auto;}
+.log-entry{border-bottom:1px solid var(--border);}
+.log-sum{display:flex;align-items:center;gap:5px;padding:4px 2px;cursor:pointer;user-select:none;}
+.log-sum:hover{background:rgba(255,255,255,.02);}
+.log-tog{font-size:8px;color:var(--muted);transition:transform .2s;flex-shrink:0;}
+.log-tog.open{transform:rotate(90deg);}
+.log-raw{display:none;background:var(--bg);border-left:2px solid var(--border);margin:2px 0 4px 14px;padding:5px 8px;font-size:10px;color:var(--muted);white-space:pre-wrap;word-break:break-all;border-radius:0 4px 4px 0;max-height:100px;overflow-y:auto;}
+.log-hit .log-sum{color:#f87171;}
+.log-warn .log-sum{color:var(--warn);}
+.log-ok  .log-sum{color:#4ade80;}
+@keyframes pulse{0%,100%{opacity:1}50%{opacity:.3}}
+@keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-5px)}75%{transform:translateX(5px)}}
+@keyframes spin{to{transform:rotate(360deg)}}
+
+/* ── 休薬指導サマリー ── */
+.summary-panel{background:var(--panel);border:1px solid var(--bord2);border-radius:10px;overflow:hidden;display:none;}
+.summary-head{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:1px solid var(--border);background:linear-gradient(135deg,#0d1f35,#0a1829);}
+.summary-head h3{font-size:13px;font-weight:900;color:var(--acc2);flex:1;margin:0;}
+.sum-count{background:var(--danger);color:#fff;font-size:10px;font-family:var(--mono);font-weight:700;padding:2px 8px;border-radius:10px;min-width:22px;text-align:center;}
+.sum-count.zero{background:var(--bord2);color:var(--muted);}
+.sbtn{padding:5px 12px;border-radius:6px;border:none;font-family:var(--sans);font-size:11px;font-weight:700;cursor:pointer;transition:all .2s;}
+.sbtn-clear{background:transparent;color:var(--muted);border:1px solid var(--border);}
+.sbtn-clear:hover{color:var(--danger);border-color:var(--danger);}
+.sbtn-csv{background:#0a2540;color:var(--accent);border:1px solid var(--accent);}
+.sbtn-csv:hover{background:var(--accent);color:#fff;}
+.sum-empty{padding:20px;text-align:center;font-size:12px;color:var(--muted);}
+.sum-table{width:100%;border-collapse:collapse;font-size:12px;}
+.sum-table th{background:#0a1829;color:var(--muted);font-size:10px;font-weight:700;padding:6px 10px;text-align:left;border-bottom:1px solid var(--border);font-family:var(--mono);letter-spacing:.05em;}
+.sum-table td{padding:8px 10px;border-bottom:1px solid var(--border);vertical-align:middle;}
+.sum-table tr:last-child td{border-bottom:none;}
+.sum-table tr:hover td{background:rgba(14,165,233,.05);}
+.drug-name-cell{font-weight:700;color:var(--text);}
+.drug-cat{font-size:9px;color:var(--muted);font-family:var(--mono);margin-top:2px;}
+.rest-period{font-family:var(--mono);font-size:11px;color:var(--warn);font-weight:700;}
+.rest-note{font-size:10px;color:var(--muted);margin-top:2px;}
+.src-tags{display:flex;flex-wrap:wrap;gap:3px;}
+.src-tag{background:var(--border);color:var(--muted);font-size:9px;font-family:var(--mono);padding:1px 5px;border-radius:3px;}
+.src-tag.hit{background:#0a2540;color:var(--accent);}
+.hit-count-badge{background:var(--danger);color:#fff;font-size:9px;font-family:var(--mono);padding:1px 6px;border-radius:8px;font-weight:700;}
+</style>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#070d1a">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="休薬スキャナー">
+</head>
+<body>
+
+<!-- OCR初期化オーバーレイ -->
+<div id="initOverlay">
+  <div class="spin"></div>
+  <p id="initMsg">OCRエンジンを初期化中...</p>
+  <div class="init-bar-bg"><div class="init-bar-fill" id="initBar"></div></div>
+  <p style="font-size:11px;color:#2a4a6a;margin-top:4px;text-align:center;max-width:280px;line-height:1.6">
+    初回のみ言語データをダウンロードします（jpn+eng 約30MB）<br>
+    2回目以降はオフライン動作します
+  </p>
+</div>
+
+<header>
+  <span style="font-size:20px">💊</span>
+  <h1>休薬スキャナー</h1>
+  <span class="badge">BETA</span>
+  <button id="btnDownload" onclick="downloadSelf()">⬇ 保存</button>
+</header>
+
+<div class="main">
+
+  <!-- TABS -->
+  <div class="tabs">
+    <button class="tab-btn active" id="tabVideo" onclick="switchMode('video')">📹 カメラスキャン</button>
+    <button class="tab-btn"        id="tabImage" onclick="switchMode('image')">🖼 画像ファイル</button>
+  </div>
+
+  <!-- 動画モード -->
+  <div id="videoMode">
+    <div class="camera-wrap">
+      <video id="video" autoplay playsinline muted></video>
+      <canvas id="canvas"></canvas>
+      <div class="scan-guide" id="scanGuide">
+        <div class="scan-line" id="scanLine"></div>
+      </div>
+      <div class="cam-hud">
+        <div class="hud-dot" id="hudDot"></div>
+        <span class="hud-label" id="hudLabel">初期化完了後にスキャン開始できます</span>
+        <span class="hud-badge" id="hudBadge" style="display:none"></span>
+      </div>
+      <div class="cam-bottom" id="camBottom">
+        <span class="cam-info">タップで静止画を追加</span>
+        <button class="shutter-btn" id="btnShutter" onclick="captureStill()" disabled></button>
+        <div style="display:flex;align-items:center;gap:4px">
+          <span class="cam-info">キュー</span>
+          <span class="q-counter zero" id="qCount">0</span>
+        </div>
+      </div>
+    </div>
+    <div class="vid-ctrl">
+      <button class="vc vc-start" id="btnStart" onclick="startVideoMode()" disabled>⏳ 初期化中...</button>
+      <button class="vc vc-stop"  id="btnStop"  onclick="stopVideoMode()" style="display:none">⏹ 停止</button>
+    </div>
+    <div class="queue-panel" id="queuePanel" style="display:none">
+      <div class="queue-head">
+        <h3>📸 キャプチャキュー</h3>
+        <button class="q-btn q-btn-scan" id="btnScanQ" onclick="scanQueue()">🔍 まとめてスキャン</button>
+        <button class="q-btn q-btn-clear" onclick="clearQueue()">クリア</button>
+      </div>
+      <div class="queue-scroll" id="qScroll">
+        <div class="q-empty" id="qEmpty">シャッターボタンで静止画を追加</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 画像モード -->
+  <div id="imageMode" style="display:none">
+    <div class="drop-zone" id="dropZone"
+         onclick="document.getElementById('fileInput').click()"
+         ondragover="onDragOver(event)" ondragleave="onDragLeave()" ondrop="onDrop(event)">
+      <div class="di">📂</div>
+      <p>クリック・ドラッグ＆ドロップで画像を追加</p>
+      <small>複数選択OK ／ JPG・PNG・GIF・WebP</small>
+    </div>
+    <input type="file" id="fileInput" accept="image/*" multiple onchange="onFileSelect(event)">
+    <div class="img-grid" id="imgGrid" style="display:none"></div>
+    <div class="prog-wrap" id="imgProg">
+      <div class="prog-label" id="imgProgLabel">処理中...</div>
+      <div class="prog-bg"><div class="prog-fill" id="imgProgFill"></div></div>
+    </div>
+    <div class="img-ctrl" id="imgCtrl" style="display:none">
+      <button class="ib ib-add" onclick="document.getElementById('fileInput').click()">➕ 追加</button>
+      <button class="ib ib-scan" id="btnScanImgs" onclick="scanImages()">🔍 スキャン</button>
+      <button class="ib ib-clr"  onclick="clearImages()">クリア</button>
+    </div>
+  </div>
+
+  <!-- ALERT -->
+  <div id="alertBanner">
+    <h2>⚠️ 休薬対象薬剤を検出</h2>
+    <div id="alertDrugs"></div>
+  </div>
+
+
+  <!-- 休薬指導サマリー -->
+  <div class="summary-panel" id="summaryPanel">
+    <div class="summary-head">
+      <h3>🏥 休薬指導一覧</h3>
+      <span class="sum-count zero" id="sumCount">0</span>
+      <button class="sbtn sbtn-csv" onclick="exportSummaryCSV()">⬇ CSV</button>
+      <button class="sbtn sbtn-clear" onclick="clearSummary()">クリア</button>
+    </div>
+    <div id="sumBody">
+      <div class="sum-empty" id="sumEmpty">スキャン後に検出された薬剤がここにまとまります</div>
+      <table class="sum-table" id="sumTable" style="display:none">
+        <thead>
+          <tr>
+            <th>薬品名 / 分類</th>
+            <th>休薬期間の目安</th>
+            <th style="text-align:center">検出</th>
+            <th>検出元</th>
+          </tr>
+        </thead>
+        <tbody id="sumTbody"></tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- LOG -->
+  <div class="panel">
+    <div class="log-head">
+      <h3>📋 スキャンログ</h3>
+      <button class="lbtn" onclick="exportCSV()">⬇ CSV</button>
+      <button class="lbtn" onclick="clearLog()">🗑</button>
+    </div>
+    <div id="logArea"></div>
+  </div>
+
+  <!-- DRUG LIST -->
+  <div class="panel">
+    <h3>🔴 休薬対象薬剤リスト（1行1薬剤・部分一致）</h3>
+    <textarea id="drugListArea" spellcheck="false"># -- 抗血小板薬 --
+バイアスピリン
+アスピリン
+バファリン配合錠
+ニトギス配合錠
+バッサミン配合錠
+ファモター配合錠
+タケルダ配合錠
+キャブピリン配合錠
+パナルジン
+チクロピジン
+プラビックス
+クロピドグレル
+コンプラビン配合錠
+ロレアス配合錠
+エフィエント
+プラスグレル
+ブリリンタ
+チカグレロル
+プレタール
+シロスタゾール
+アンプラーグ
+サルポグレラート
+# -- 抗凝固薬 --
+ワーファリン
+ワルファリン
+プラザキサ
+ダビガトラン
+イグザレルト
+リバーロキサバン
+エリキュース
+アピキサバン
+リクシアナ
+エドキサバン
+# -- プロスタグランジン製剤 --
+ドルナー
+プロサイリン
+ベラプロスト
+ケアロード
+ベラサス
+ウプトラビ
+セレキシパグ
+# -- EPA製剤・高脂血症薬 --
+エパデール
+イコサペント酸エチル
+ロトリガ
+# -- 血管拡張薬 --
+オパルモン
+リマプロスト
+# -- 冠血管拡張薬 --
+ペルサンチン
+ジピリダモール
+コメリアン
+ジラゼプ
+ロコルナール
+トラピジル
+バスタレルフ
+トリメタジジン
+# -- 脳代謝改善薬 --
+ケタス
+イブジラスト
+セロクラール
+イフェンプロジル
+# -- 飲酒量低減薬 --
+セリンクロ
+ナルメフェン
+# -- 女性ホルモン製剤（手術前後禁忌） --
+ヤーズフレックス配合錠
+ヤーズ配合錠
+ドロエチ配合錠
+アリッサ配合錠
+ルナベル配合錠
+フリウェル配合錠
+ジェミーナ配合錠
+アンジュ
+トリキュラー
+ラベルフィーユ
+マーベロン
+ファボワール
+シンフェーズ</textarea>
+    <p class="hint">商品名・一般名・英語名・読み仮名 いずれも可</p>
+  </div>
+
+</div>
+
+<script>
+const SCAN_INTERVAL_MS  = 900;
+const CONFIDENCE_MIN    = 30; // 30%以上は照合対象（ノイズはfuzzy側で弾く）
+const ALERT_COOLDOWN_MS = 4000;
+
+let stream=null, scanning=false, worker=null, workerReady=false;
+let scanTimer=null, lastAlertAt=0, currentMode='video';
+let captureQueue=[], imageFiles=[], qIdSeed=0, iIdSeed=0;
+
+const video=document.getElementById('video'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
+const hudDot=document.getElementById('hudDot'), hudLabel=document.getElementById('hudLabel'), hudBadge=document.getElementById('hudBadge');
+const alertBanner=document.getElementById('alertBanner'), alertDrugs=document.getElementById('alertDrugs');
+const drugListArea=document.getElementById('drugListArea'), logArea=document.getElementById('logArea');
+const qScroll=document.getElementById('qScroll'), qEmpty=document.getElementById('qEmpty'), qCount=document.getElementById('qCount');
+const queuePanel=document.getElementById('queuePanel'), imgGrid=document.getElementById('imgGrid');
+const imgProg=document.getElementById('imgProg'), imgProgLabel=document.getElementById('imgProgLabel'), imgProgFill=document.getElementById('imgProgFill');
+const imgCtrl=document.getElementById('imgCtrl'), btnStart=document.getElementById('btnStart'), btnStop=document.getElementById('btnStop');
+const btnShutter=document.getElementById('btnShutter'), btnScanQ=document.getElementById('btnScanQ');
+const camBottom=document.getElementById('camBottom'), scanGuide=document.getElementById('scanGuide'), scanLine=document.getElementById('scanLine');
+
+/* OCR初期化（起動時） */
+// -- IndexedDBキャッシュキー --
+const IDB_NAME    = 'kyuyaku-ocr-cache';
+const IDB_VERSION = 1;
+const IDB_STORE   = 'langdata';
+const LANG_FILES  = [
+  { key: 'jpn.traineddata', url: 'https://tessdata.projectnaptha.com/4.0.0/jpn.traineddata.gz' },
+  { key: 'eng.traineddata', url: 'https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz' },
+];
+
+function openIDB(){
+  return new Promise((res,rej)=>{
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+function idbGet(db, key){
+  return new Promise((res,rej)=>{
+    const req = db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
+    req.onsuccess = e => res(e.target.result);
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+function idbPut(db, key, val){
+  return new Promise((res,rej)=>{
+    const req = db.transaction(IDB_STORE,'readwrite').objectStore(IDB_STORE).put(val, key);
+    req.onsuccess = e => res();
+    req.onerror   = e => rej(e.target.error);
+  });
+}
+
+async function fetchWithProgress(url, label, bar, msg, progStart, progEnd){
+  msg.textContent = label + ' をダウンロード中...';
+  const res = await fetch(url);
+  if(!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
+  const total = parseInt(res.headers.get('content-length') || '0');
+  const reader = res.body.getReader();
+  const chunks = [];
+  let received = 0;
+  while(true){
+    const {done, value} = await reader.read();
+    if(done) break;
+    chunks.push(value);
+    received += value.length;
+    if(total > 0){
+      const pct = progStart + (received / total) * (progEnd - progStart);
+      bar.style.width = Math.round(pct) + '%';
+    }
+  }
+  const blob = new Blob(chunks);
+  return await blob.arrayBuffer();
+}
+
+async function initWorker(){
+  const bar = document.getElementById('initBar');
+  const msg = document.getElementById('initMsg');
+  try{
+    const db = await openIDB();
+
+    // 言語データをIndexedDBから取得 or ダウンロード
+    const langBuffers = {};
+    for(let i=0; i<LANG_FILES.length; i++){
+      const {key, url} = LANG_FILES[i];
+      const progStart = i * 40;
+      const progEnd   = progStart + 40;
+      let buf = await idbGet(db, key);
+      if(buf){
+        msg.textContent = key.replace('.traineddata','') + ' (キャッシュ済み)';
+        bar.style.width = (progEnd) + '%';
+      } else {
+        msg.textContent = key.replace('.traineddata','') + ' を初回ダウンロード中...';
+        buf = await fetchWithProgress(url, key.replace('.traineddata',''), bar, msg, progStart, progEnd);
+        await idbPut(db, key, buf);
+        msg.textContent = key.replace('.traineddata','') + ' を保存しました';
+      }
+      langBuffers[key] = buf;
+    }
+
+    bar.style.width = '85%';
+    msg.textContent = 'OCRエンジンを起動中...';
+
+    // Workerに言語データをBlobとして渡す
+    const langPaths = {};
+    for(const [key, buf] of Object.entries(langBuffers)){
+      langPaths[key] = URL.createObjectURL(new Blob([buf]));
+    }
+
+    worker = await Tesseract.createWorker(['jpn','eng'], 1, {
+      workerPath:   'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
+      corePath:     'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
+      langPath:     'https://tessdata.projectnaptha.com/4.0.0',
+      cacheMethod:  'none',
+      logger: m => {
+        if(m.status === 'recognizing text'){
+          // スキャン中の進捗は別途HUDで表示
+        }
+      }
+    });
+    await worker.setParameters({tessedit_pageseg_mode: Tesseract.PSM.AUTO});
+
+    // Blob URLを解放
+    Object.values(langPaths).forEach(u => URL.revokeObjectURL(u));
+
+    bar.style.width  = '100%';
+    workerReady      = true;
+    await new Promise(r => setTimeout(r, 300));
+    document.getElementById('initOverlay').style.display = 'none';
+    btnStart.disabled    = false;
+    btnStart.textContent = '📷 スキャン開始';
+    setHud('idle','スキャン開始ボタンを押してください');
+
+  } catch(e) {
+    const bar = document.getElementById('initBar');
+    const msg = document.getElementById('initMsg');
+    msg.textContent = '初期化失敗: ' + e.message;
+    // キャッシュが壊れている可能性 → クリアボタンを表示
+    const btn = document.createElement('button');
+    btn.textContent = '🗑 キャッシュをクリアして再試行';
+    btn.style.cssText = 'margin-top:12px;padding:8px 16px;border-radius:8px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer;font-size:13px;';
+    btn.onclick = async () => {
+      try{
+        indexedDB.deleteDatabase(IDB_NAME);
+        location.reload();
+      }catch(e2){ location.reload(); }
+    };
+    msg.insertAdjacentElement('afterend', btn);
+  }
+}
+
+/* モード */
+function switchMode(mode){
+  if(scanning)stopVideoMode();
+  currentMode=mode;
+  document.getElementById('tabVideo').classList.toggle('active',mode==='video');
+  document.getElementById('tabImage').classList.toggle('active',mode==='image');
+  document.getElementById('videoMode').style.display=mode==='video'?'':'none';
+  document.getElementById('imageMode').style.display=mode==='image'?'':'none';
+  const msg=workerReady?(mode==='video'?'スキャン開始ボタンを押してください':'画像を選択してください'):'OCR初期化中...';
+  setHud('idle',msg);
+}
+
+/* 動画 */
+async function startVideoMode(){
+  if(!workerReady)return;
+  try{
+    btnStart.disabled=true;
+    setHud('active','カメラ起動中...');
+    stream=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920},height:{ideal:1080}}});
+    video.srcObject=stream;
+    await new Promise(r=>{video.onloadedmetadata=r;});
+    video.play();
+    scanning=true;
+    btnStart.style.display='none';btnStop.style.display='';
+    camBottom.style.display='flex';scanGuide.style.display='';scanLine.style.display='';
+    btnShutter.disabled=false;
+    setHud('active','スキャン中...');
+    runVideoScan();
+  }catch(e){setHud('idle',`カメラエラー: ${e.message}`);btnStart.disabled=false;}
+}
+function stopVideoMode(){
+  scanning=false;clearTimeout(scanTimer);
+  if(stream){stream.getTracks().forEach(t=>t.stop());stream=null;}
+  video.srcObject=null;alertBanner.style.display='none';
+  btnStop.style.display='none';btnStart.style.display='';btnStart.disabled=false;
+  camBottom.style.display='none';scanGuide.style.display='none';scanLine.style.display='none';
+  btnShutter.disabled=true;hudBadge.style.display='none';
+  setHud('idle','停止しました');
+}
+async function runVideoScan(){
+  if(!scanning||!workerReady)return;
+  const t0=Date.now();
+  try{
+    canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;
+    ctx.drawImage(video,0,0);
+    const rawUrl = canvas.toDataURL('image/jpeg', 0.92);
+    const preUrl  = await preprocessImage(rawUrl);
+    const{data}=await worker.recognize(preUrl);
+    hudBadge.style.display='';
+    hudBadge.textContent=`${Date.now()-t0}ms / 信頼度${Math.round(data.confidence)}%`;
+    if(data.confidence>=CONFIDENCE_MIN)checkDrugs(data.text||'',data.confidence,'動画');
+  }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,'動画');}
+  if(scanning)scanTimer=setTimeout(runVideoScan,SCAN_INTERVAL_MS);
+}
+
+/* シャッター */
+function captureStill(){
+  if(!video.videoWidth)return;
+  canvas.width=video.videoWidth;canvas.height=video.videoHeight;
+  ctx.drawImage(video,0,0);
+  const dataUrl=canvas.toDataURL('image/jpeg',0.92);
+  const id=++qIdSeed;captureQueue.push({id,dataUrl,scanned:false});
+  renderQueue();queuePanel.style.display='';
+}
+function renderQueue(){
+  qCount.textContent=captureQueue.length;
+  qCount.className='q-counter'+(captureQueue.length===0?' zero':'');
+  qEmpty.style.display=captureQueue.length===0?'':'none';
+  btnScanQ.disabled=captureQueue.length===0;
+  const existing=new Set([...qScroll.querySelectorAll('.thumb')].map(el=>el.dataset.id));
+  const current=new Set(captureQueue.map(c=>String(c.id)));
+  qScroll.querySelectorAll('.thumb').forEach(el=>{if(!current.has(el.dataset.id))el.remove();});
+  captureQueue.forEach((cap,i)=>{
+    if(!existing.has(String(cap.id))){
+      const wrap=document.createElement('div');wrap.className=`thumb${cap.scanned?' scanned':''}`;wrap.dataset.id=cap.id;
+      const img=document.createElement('img');img.src=cap.dataUrl;img.onclick=()=>window.open(cap.dataUrl);
+      const num=document.createElement('span');num.className='thumb-n';num.textContent=`#${i+1}`;
+      const del=document.createElement('button');del.className='thumb-del';del.textContent='×';
+      del.onclick=e=>{e.stopPropagation();removeFromQueue(cap.id);};
+      wrap.append(img,num,del);qScroll.append(wrap);
+    }
+  });
+}
+function removeFromQueue(id){captureQueue=captureQueue.filter(c=>c.id!==id);renderQueue();if(captureQueue.length===0)queuePanel.style.display='none';}
+function clearQueue(){captureQueue=[];qScroll.querySelectorAll('.thumb').forEach(el=>el.remove());renderQueue();queuePanel.style.display='none';}
+async function scanQueue(){
+  if(!workerReady||captureQueue.length===0)return;
+  btnScanQ.disabled=true;const total=captureQueue.length;
+  for(let i=0;i<captureQueue.length;i++){
+    const cap=captureQueue[i];
+    setHud('active',`キャプチャ ${i+1}/${total} をスキャン中...`);
+    try{
+      const preUrl = await preprocessImage(cap.dataUrl);
+      const{data}=await worker.recognize(preUrl);
+      cap.scanned=true;
+      const el=qScroll.querySelector(`[data-id="${cap.id}"]`);if(el)el.classList.add('scanned');
+      checkDrugs(data.text||'',data.confidence,`キャプチャ#${i+1}`);
+    }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,`キャプチャ#${i+1}`);}
+  }
+  setHud('ok',`${total}枚のスキャン完了`);btnScanQ.disabled=false;
+}
+
+/* 画像ファイルモード */
+function onFileSelect(e){[...e.target.files].forEach(f=>{if(f.type.startsWith('image/'))readImageFile(f);});e.target.value='';}
+function onDragOver(e){e.preventDefault();document.getElementById('dropZone').classList.add('dragover');}
+function onDragLeave(){document.getElementById('dropZone').classList.remove('dragover');}
+function onDrop(e){e.preventDefault();document.getElementById('dropZone').classList.remove('dragover');[...e.dataTransfer.files].forEach(f=>{if(f.type.startsWith('image/'))readImageFile(f);});}
+function readImageFile(file){const r=new FileReader();r.onload=ev=>addImageFile(ev.target.result);r.onerror=()=>alert(`読み込みエラー: ${file.name}`);r.readAsDataURL(file);}
+function addImageFile(dataUrl){const id=++iIdSeed;imageFiles.push({id,dataUrl,scanned:false});renderImgGrid();imgGrid.style.display='';imgCtrl.style.display='';}
+function renderImgGrid(){
+  const existing=new Set([...imgGrid.querySelectorAll('.img-cell')].map(el=>el.dataset.id));
+  const current=new Set(imageFiles.map(f=>String(f.id)));
+  imgGrid.querySelectorAll('.img-cell').forEach(el=>{if(!current.has(el.dataset.id))el.remove();});
+  imageFiles.forEach(file=>{
+    if(!existing.has(String(file.id))){
+      const cell=document.createElement('div');cell.className=`img-cell${file.scanned?' scanned':''}`;cell.dataset.id=file.id;
+      const img=document.createElement('img');img.src=file.dataUrl;img.onclick=()=>window.open(file.dataUrl);
+      const del=document.createElement('button');del.className='img-cell-del';del.textContent='×';
+      del.onclick=e=>{e.stopPropagation();removeImageFile(file.id);};
+      cell.append(img,del);imgGrid.append(cell);
+    }
+  });
+  document.getElementById('btnScanImgs').disabled=imageFiles.length===0;
+}
+function removeImageFile(id){imageFiles=imageFiles.filter(f=>f.id!==id);renderImgGrid();if(imageFiles.length===0){imgGrid.style.display='none';imgCtrl.style.display='none';}}
+function clearImages(){imageFiles=[];imgGrid.innerHTML='';imgGrid.style.display='none';imgCtrl.style.display='none';imgProg.classList.remove('on');}
+async function scanImages(){
+  if(!workerReady||imageFiles.length===0)return;
+  const btn=document.getElementById('btnScanImgs');btn.disabled=true;
+  imgProg.classList.add('on');const total=imageFiles.length;
+  for(let i=0;i<imageFiles.length;i++){
+    const file=imageFiles[i];
+    imgProgLabel.textContent=`画像 ${i+1} / ${total} をスキャン中...`;
+    imgProgFill.style.width=`${Math.round((i/total)*100)}%`;
+    try{
+      const preUrl = await preprocessImage(file.dataUrl);
+      const{data}=await worker.recognize(preUrl);
+      file.scanned=true;
+      const el=imgGrid.querySelector(`[data-id="${file.id}"]`);if(el)el.classList.add('scanned');
+      checkDrugs(data.text||'',data.confidence,`画像${i+1}`);
+    }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,`画像${i+1}`);}
+  }
+  imgProgFill.style.width='100%';imgProgLabel.textContent=`${total}枚のスキャン完了`;
+  setTimeout(()=>imgProg.classList.remove('on'),2000);btn.disabled=false;
+}
+
+/* 薬剤照合 */
+/* ══════════════════════════════════════════
+   画像前処理（OCR精度向上）
+   スキャナー・お薬手帳荒い画像向け
+══════════════════════════════════════════ */
+
+const PRE_CANVAS = document.createElement('canvas');
+const PRE_CTX    = PRE_CANVAS.getContext('2d');
+
+async function preprocessImage(dataUrl) {
+  return new Promise((resolve) => {
+    const img = new Image();
+    img.onload = () => {
+      try {
+        // Step1: 長辺2400pxに拡大（低解像度補正）
+        const TARGET = 2400;
+        const scale  = Math.max(1, TARGET / Math.max(img.width, img.height));
+        const w = Math.round(img.width  * scale);
+        const h = Math.round(img.height * scale);
+        PRE_CANVAS.width  = w;
+        PRE_CANVAS.height = h;
+        PRE_CTX.imageSmoothingEnabled = true;
+        PRE_CTX.imageSmoothingQuality = 'high';
+        PRE_CTX.drawImage(img, 0, 0, w, h);
+
+        const imageData = PRE_CTX.getImageData(0, 0, w, h);
+        const d = imageData.data;
+        const total = w * h;
+
+        // Step2: グレースケール化
+        const gray = new Uint8Array(total);
+        for (let i = 0; i < d.length; i += 4) {
+          gray[i >> 2] = (d[i] * 299 + d[i+1] * 587 + d[i+2] * 114) / 1000;
+        }
+
+        // Step3: コントラスト強調（上下5%を飽和）
+        const hist = new Uint32Array(256);
+        gray.forEach(v => hist[v]++);
+        const cutoff = Math.round(total * 0.05);
+        let lo = 0, hi = 255, acc = 0;
+        for (let v = 0;   v < 256; v++) { acc += hist[v]; if (acc >= cutoff) { lo = v; break; } }
+        acc = 0;
+        for (let v = 255; v >= 0;  v--) { acc += hist[v]; if (acc >= cutoff) { hi = v; break; } }
+        const range = Math.max(1, hi - lo);
+        for (let i = 0; i < total; i++) {
+          gray[i] = Math.min(255, Math.max(0, Math.round((gray[i] - lo) / range * 255)));
+        }
+
+        // Step4: Otsu法で最適二値化閾値を算出
+        const hist2 = new Uint32Array(256);
+        gray.forEach(v => hist2[v]++);
+        let sumAll = 0;
+        for (let v = 0; v < 256; v++) sumAll += v * hist2[v];
+        let sumB = 0, wB = 0, maxVar = 0, threshold = 128;
+        for (let v = 0; v < 256; v++) {
+          wB += hist2[v]; if (!wB) continue;
+          const wF = total - wB; if (!wF) break;
+          sumB += v * hist2[v];
+          const mB = sumB / wB;
+          const mF = (sumAll - sumB) / wF;
+          const varBetween = wB * wF * (mB - mF) ** 2;
+          if (varBetween > maxVar) { maxVar = varBetween; threshold = v; }
+        }
+
+        // Step5: 二値化を画素に反映（黒文字/白背景）
+        for (let i = 0; i < total; i++) {
+          const val = gray[i] > threshold ? 255 : 0;
+          const px  = i * 4;
+          d[px] = d[px+1] = d[px+2] = val;
+          d[px+3] = 255;
+        }
+        PRE_CTX.putImageData(imageData, 0, 0);
+        resolve(PRE_CANVAS.toDataURL('image/png'));
+      } catch(e) {
+        console.warn('前処理失敗、元画像で続行:', e.message);
+        resolve(dataUrl);
+      }
+    };
+    img.onerror = () => resolve(dataUrl);
+    img.src = dataUrl;
+  });
+}
+
+/* -- 正規化：OCRノイズを除去して純粋なカタカナ/ひらがな/漢字文字列にする -- */
+function normalizeOCR(str){
+  return str
+    // 全角・半角スペース、タブ、改行を除去
+    .replace(/[\s\u3000\t\r\n]/g,'')
+    // 長音符の表記ゆれ統一（ー/−/―/ｰ/‐/‑/–/—/〜 → ー）
+    .replace(/[－−‐‑–—―ｰ〜~]/g,'ー')
+    // 全角英数→半角
+    .replace(/[Ａ-Ｚａ-ｚ０-９]/g,c=>String.fromCharCode(c.charCodeAt(0)-0xFEE0))
+    // カタカナの半角→全角
+    .replace(/[ｦ-ﾟ]/g,c=>{const t='ヲァィゥェォャュョッーアイウエオカキクケコサシスセソタチツテトナニヌネノハヒフヘホマミムメモヤユヨラリルレロワン゛゜';const i=c.charCodeAt(0)-0xFF65;return i>=0&&i<t.length?t[i]:c;})
+    // OCRでよく化ける記号を除去
+    .replace(/[|｜「」『』【】［］()（）{}<>《》・。、！？!?.,;:]/g,'')
+    // アルファベット小文字化
+    .toLowerCase();
+}
+
+/* -- 薬剤名正規化（リスト側も同じ処理） -- */
+function normalizeDrug(str){
+  return normalizeOCR(str.trim());
+}
+
+function levenshtein(a, b){
+  const la = a.length, lb = b.length;
+  let dp = Array.from({length: lb+1}, (_,i) => i);
+  for(let i = 1; i <= la; i++){
+    let prev = dp[0]; dp[0] = i;
+    for(let j = 1; j <= lb; j++){
+      const temp = dp[j];
+      dp[j] = a[i-1] === b[j-1] ? prev : 1 + Math.min(prev, dp[j], dp[j-1]);
+      prev = temp;
+    }
+  }
+  return dp[lb];
+}
+
+function maxErrors(nameLen){
+  if(nameLen <= 3) return 0;
+  if(nameLen <= 5) return 1;
+  if(nameLen <= 8) return 2;
+  return 3;
+}
+
+function fuzzyIncludes(haystack, needle){
+  // Level1: 完全一致
+  if(haystack.includes(needle)) return true;
+
+  const nlen    = needle.length;
+  const allowed = maxErrors(nlen);
+
+  // Level2: チャンク先頭マッチ（スペース混入対応・既存ロジック）
+  if(nlen >= 4){
+    const head = needle.slice(0, Math.ceil(nlen * 0.7));
+    if(head.length >= 2 && haystack.includes(head)) return true;
+  }
+
+  // Level3: スライディングウィンドウ編集距離マッチ
+  // （OCR誤認識：ワ→フ、ン→ソ、ー→一 などを吸収）
+  if(allowed > 0){
+    const winLen = nlen + allowed;
+    for(let i = 0; i <= haystack.length - nlen + allowed; i++){
+      const window = haystack.slice(i, i + winLen);
+      // ウィンドウ内の部分文字列と比較
+      for(let wl = Math.max(1, nlen - allowed); wl <= Math.min(window.length, nlen + allowed); wl++){
+        if(levenshtein(needle, window.slice(0, wl)) <= allowed) return true;
+      }
+    }
+  }
+  return false;
+}
+
+function getDrugList(){return drugListArea.value.split('\n').map(s=>s.trim()).filter(s=>s.length>0&&!s.startsWith('#'));}
+
+// 信頼度の閾値定義
+const CONF_LOW  = 50;  // 50%未満: 読み取り不良（テキスト自体が怪しい）
+const CONF_MID  = 80;  // 80%未満: 要目視（オーナー指定）
+
+function checkDrugs(text,confidence,source){
+  if(confidence<CONFIDENCE_MIN)return;
+  const norm=normalizeOCR(text);
+  const drugs=getDrugList();
+  const hits=[];
+  for(const d of drugs){
+    if(!d) continue;
+    const nd=normalizeDrug(d);
+    if(nd.length===0) continue;
+    if(fuzzyIncludes(norm, nd)){
+      hits.push(d);
+    }
+  }
+  const ts=new Date().toLocaleTimeString('ja-JP');
+  const hasText = text.trim().length > 5;
+
+  if(hits.length>0){
+    showAlert(hits);
+    addLog(ts,hits,confidence,text,source);
+    hits.forEach(d=>addToSummary(d,source));
+    // 検出あり+低信頼度 → さらに目視を促す
+    if(confidence < CONF_MID && source !== '動画'){
+      setHud('alert', `⚠️ 検出あり・信頼度低(${Math.round(confidence)}%) 必ず目視確認してください`);
+    }
+  } else if(hasText){
+    addLog(ts,[],confidence,text,source);
+    if(source !== '動画'){
+      if(confidence < CONF_LOW){
+        // 読み取り不良
+        setHud('warn', `⚠️ 読み取り不良(信頼度${Math.round(confidence)}%) 目視確認が必要です`);
+        showVisualCheckWarning(source, confidence);
+      } else if(confidence < CONF_MID){
+        // やや低信頼度
+        setHud('warn', `👁 信頼度低め(${Math.round(confidence)}%) 目視で確認してください`);
+      } else {
+        setHud('ok', `✅ 該当薬剤なし (信頼度${Math.round(confidence)}%) ※必ず目視確認を`);
+      }
+    }
+  } else if(!hasText && confidence >= CONFIDENCE_MIN){
+    if(source !== '動画'){
+      setHud('warn', `⚠️ テキスト読み取れず 目視確認が必要です`);
+      showVisualCheckWarning(source, confidence);
+    }
+  }
+}
+
+// 目視確認アラートをログに追記
+function showVisualCheckWarning(source, confidence){
+  const ts = new Date().toLocaleTimeString('ja-JP');
+  const entry = document.createElement('div');
+  entry.className = 'log-entry log-warn';
+  const sumEl = document.createElement('div');
+  sumEl.className = 'log-sum';
+  sumEl.style.color = 'var(--warn)';
+  sumEl.textContent = `[${ts}] [${source}] ⚠️ 読み取り不良(信頼度${Math.round(confidence)}%) — 目視確認が必要です`;
+  entry.appendChild(sumEl);
+  logArea.prepend(entry);
+}
+
+
+/* ================================================
+   休薬指導サマリー
+   summaryMap: { 正規化薬剤名 → {name, category, restPeriod, note, sources:Set, count} }
+   ================================================ */
+
+// 休薬期間DB（PDFから）
+const DRUG_DB = [
+  // 抗血小板薬
+  {keys:['バイアスピリン','アスピリン'],          cat:'抗血小板薬', period:'7日',      note:''},
+  {keys:['バファリン配合錠','ニトギス','バッサミン','ファモター'], cat:'抗血小板薬', period:'7日', note:'販売中止予定含む'},
+  {keys:['タケルダ配合錠'],                       cat:'抗血小板薬', period:'7日',      note:''},
+  {keys:['キャブピリン配合錠'],                   cat:'抗血小板薬', period:'7日',      note:''},
+  {keys:['パナルジン','チクロピジン'],             cat:'抗血小板薬', period:'10〜14日', note:'当院規定10〜14日'},
+  {keys:['プラビックス','クロピドグレル'],         cat:'抗血小板薬', period:'14日',     note:'当院規定10〜14日'},
+  {keys:['コンプラビン配合錠','ロレアス配合錠'],   cat:'抗血小板薬', period:'14日',     note:'処方元に確認'},
+  {keys:['エフィエント','プラスグレル'],           cat:'抗血小板薬', period:'14日',     note:'PCI適応 処方元に確認'},
+  {keys:['ブリリンタ','チカグレロル'],             cat:'抗血小板薬', period:'5日',      note:'PCI適応 処方元に確認'},
+  {keys:['プレタール','シロスタゾール'],           cat:'抗血小板薬', period:'3日',      note:'当院規定2〜4日'},
+  {keys:['アンプラーグ','サルポグレラート'],       cat:'抗血小板薬', period:'1日',      note:'当院規定1〜2日'},
+  // 抗凝固薬
+  {keys:['ワーファリン','ワルファリン'],           cat:'抗凝固薬',   period:'5日',      note:''},
+  {keys:['プラザキサ','ダビガトラン'],             cat:'抗凝固薬',   period:'1〜2日',   note:'CCr≦50は2日'},
+  {keys:['イグザレルト','リバーロキサバン'],       cat:'抗凝固薬',   period:'1日',      note:'当院規定2〜4日'},
+  {keys:['エリキュース','アピキサバン'],           cat:'抗凝固薬',   period:'1〜2日',   note:''},
+  {keys:['リクシアナ','エドキサバン'],             cat:'抗凝固薬',   period:'1日',      note:''},
+  // プロスタグランジン製剤
+  {keys:['ドルナー','プロサイリン','ベラプロスト']  ,cat:'PG製剤',   period:'1日',      note:''},
+  {keys:['ケアロード','ベラサス'],                 cat:'PG製剤',     period:'1日',      note:'処方元に確認（肺高血圧症）'},
+  {keys:['ウプトラビ','セレキシパグ'],             cat:'PG製剤',     period:'規定なし', note:'処方元に確認'},
+  // EPA製剤
+  {keys:['エパデール','イコサペント酸エチル'],     cat:'EPA製剤',    period:'7〜10日',  note:''},
+  {keys:['ロトリガ'],                              cat:'EPA製剤',    period:'規定なし', note:'休薬時はエパデールに準ずる'},
+  // 血管拡張薬
+  {keys:['オパルモン','リマプロスト'],             cat:'血管拡張薬', period:'1日',      note:''},
+  // 冠血管拡張薬
+  {keys:['ペルサンチン','ジピリダモール'],         cat:'冠血管拡張薬',period:'1〜1.5日',note:'当院規定1〜2日'},
+  {keys:['コメリアン','ジラゼプ'],                 cat:'冠血管拡張薬',period:'2〜3日',  note:''},
+  {keys:['ロコルナール','トラピジル'],             cat:'冠血管拡張薬',period:'1〜2日',  note:''},
+  {keys:['バスタレルフ','トリメタジジン'],         cat:'冠血管拡張薬',period:'規定なし',note:'半減期からの目安3日'},
+  // 脳代謝改善薬
+  {keys:['ケタス','イブジラスト'],                 cat:'脳代謝改善薬',period:'なし(3日)',note:''},
+  {keys:['セロクラール','イフェンプロジル'],       cat:'脳代謝改善薬',period:'1〜2日',  note:''},
+  // 飲酒量低減薬
+  {keys:['セリンクロ','ナルメフェン'],             cat:'飲酒量低減薬',period:'7日',     note:'フェンタニル注と併用禁忌'},
+  // 女性ホルモン製剤
+  {keys:['ヤーズフレックス配合錠','ヤーズ配合錠','ドロエチ配合錠','アリッサ配合錠'], cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
+  {keys:['ルナベル配合錠','フリウェル配合錠','ジェミーナ配合錠'],                    cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
+  {keys:['アンジュ','トリキュラー','ラベルフィーユ'],                                cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
+  {keys:['マーベロン','ファボワール','シンフェーズ'],                                 cat:'女性ホルモン製剤', period:'術前4週・術後2週', note:'血栓症リスク'},
+];
+
+// 薬剤名→DBエントリを引く
+function lookupDrug(drugName){
+  const nd = normalizeOCR(drugName);
+  for(const entry of DRUG_DB){
+    for(const k of entry.keys){
+      if(fuzzyIncludes(nd, normalizeOCR(k)) || fuzzyIncludes(normalizeOCR(k), nd)){
+        return entry;
+      }
+    }
+  }
+  return null;
+}
+
+// サマリーマップ: key=正規化名, value={displayName, entry, sources, count}
+const summaryMap = new Map();
+
+function addToSummary(drugName, source){
+  const nd = normalizeOCR(drugName);
+  if(summaryMap.has(nd)){
+    const rec = summaryMap.get(nd);
+    rec.count++;
+    rec.sources.add(source);
+  } else {
+    const entry = lookupDrug(drugName);
+    summaryMap.set(nd, {
+      displayName: drugName,
+      entry: entry,
+      sources: new Set([source]),
+      count: 1
+    });
+  }
+  renderSummary();
+}
+
+function renderSummary(){
+  const panel = document.getElementById('summaryPanel');
+  const empty = document.getElementById('sumEmpty');
+  const table = document.getElementById('sumTable');
+  const tbody = document.getElementById('sumTbody');
+  const badge = document.getElementById('sumCount');
+
+  panel.style.display = 'block';
+  const size = summaryMap.size;
+  badge.textContent = size;
+  badge.className = 'sum-count' + (size === 0 ? ' zero' : '');
+
+  if(size === 0){
+    empty.style.display = '';
+    table.style.display = 'none';
+    return;
+  }
+  empty.style.display = 'none';
+  table.style.display = '';
+
+  // カテゴリ順でソート
+  const catOrder = ['抗血小板薬','抗凝固薬','PG製剤','EPA製剤','血管拡張薬','冠血管拡張薬','脳代謝改善薬','飲酒量低減薬','女性ホルモン製剤'];
+  const sorted = [...summaryMap.values()].sort((a,b)=>{
+    const ai = catOrder.indexOf(a.entry?.cat||'');
+    const bi = catOrder.indexOf(b.entry?.cat||'');
+    if(ai !== bi) return (ai<0?99:ai) - (bi<0?99:bi);
+    return a.displayName.localeCompare(b.displayName, 'ja');
+  });
+
+  tbody.innerHTML = '';
+  let lastCat = '';
+  sorted.forEach(rec => {
+    const cat = rec.entry?.cat || '不明';
+    // カテゴリ区切り行
+    if(cat !== lastCat){
+      const sep = document.createElement('tr');
+      sep.innerHTML = `<td colspan="4" style="background:#070d1a;color:var(--muted);font-size:9px;font-family:var(--mono);padding:4px 10px;letter-spacing:.08em;font-weight:700;">-- ${cat} --</td>`;
+      tbody.appendChild(sep);
+      lastCat = cat;
+    }
+    const tr = document.createElement('tr');
+    const srcs = [...rec.sources].map(s=>`<span class="src-tag hit">${s}</span>`).join('');
+    const period = rec.entry?.period || '—';
+    const note   = rec.entry?.note   || '';
+    tr.innerHTML = `
+      <td class="drug-name-cell">${rec.displayName}<div class="drug-cat">${cat}</div></td>
+      <td><div class="rest-period">${period}</div>${note?`<div class="rest-note">${note}</div>`:''}</td>
+      <td style="text-align:center"><span class="hit-count-badge">${rec.count}回</span></td>
+      <td><div class="src-tags">${srcs}</div></td>`;
+    tbody.appendChild(tr);
+  });
+}
+
+function clearSummary(){
+  summaryMap.clear();
+  renderSummary();
+  document.getElementById('summaryPanel').style.display='none';
+}
+
+function exportSummaryCSV(){
+  if(summaryMap.size===0){alert('データがありません');return;}
+  const catOrder=['抗血小板薬','抗凝固薬','PG製剤','EPA製剤','血管拡張薬','冠血管拡張薬','脳代謝改善薬','飲酒量低減薬','女性ホルモン製剤'];
+  const sorted=[...summaryMap.values()].sort((a,b)=>{
+    const ai=catOrder.indexOf(a.entry?.cat||'');const bi=catOrder.indexOf(b.entry?.cat||'');
+    if(ai!==bi)return(ai<0?99:ai)-(bi<0?99:bi);
+    return a.displayName.localeCompare(b.displayName,'ja');
+  });
+  const rows=sorted.map(r=>`"${r.displayName}","${r.entry?.cat||''}","${r.entry?.period||''}","${r.entry?.note||''}","${r.count}","${[...r.sources].join('/')}"`);
+  const csv='\ufeff薬品名,分類,休薬期間目安,備考,検出回数,検出元\n'+rows.join('\n');
+  const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`休薬指導一覧-${new Date().toISOString().slice(0,10)}.csv`});
+  a.click();URL.revokeObjectURL(a.href);
+}
+
+/* ==========================================
+   休薬指導サマリー
+========================================== */
+
+// 薬剤マスタ：PDF「病院-薬剤-配-01/02」2025年2月版
+
+// サマリーストア: { [normName]: {name, cat, period, count, sources:[]} }
+/* アラート */
+function showAlert(drugs){
+  const now=Date.now();if(now-lastAlertAt<ALERT_COOLDOWN_MS)return;
+  lastAlertAt=now;alertBanner.style.display='';
+  alertDrugs.innerHTML=drugs.map(d=>`<span class="dtag">⚠ ${d}</span>`).join('');
+  try{const u=new SpeechSynthesisUtterance(`注意。休薬対象薬剤を検出しました。${drugs.join('、')}。`);u.lang='ja-JP';u.rate=1.1;speechSynthesis.speak(u);}catch(e){}
+  setHud('alert',`⚠️ 検出: ${drugs.join(', ')}`);
+  setTimeout(()=>{alertBanner.style.display='none';if(scanning)setHud('active','スキャン中...');},6000);
+}
+
+/* HUD */
+function setHud(type,msg){
+  hudDot.className=`hud-dot ${type}`;
+  hudLabel.textContent=msg;
+  // warnは背景色も変える
+  const hud = document.querySelector('.cam-hud');
+  if(hud) hud.style.background = type==='warn'
+    ? 'linear-gradient(to bottom,rgba(120,80,0,0.85) 0%,transparent 100%)'
+    : 'linear-gradient(to bottom,rgba(0,0,0,0.72) 0%,transparent 100%)';
+}
+
+/* ログ */
+const logHistory=[];
+function addLog(ts,hits,confidence,rawText,source,isBad=false){
+  logHistory.unshift({ts,hits,confidence,rawText,source});if(logHistory.length>200)logHistory.pop();
+  const isHit=hits.length>0,label=source?`[${source}] `:'';
+  const okIcon  = isBad ? '⚠️ 要目視' : '👁 要目視確認';
+  const summary=isHit
+    ? `[${ts}] ${label}🚨 検出: ${hits.join(', ')} (信頼度${Math.round(confidence)}%)`
+    : `[${ts}] ${label}${okIcon} (信頼度${Math.round(confidence)}%)`;
+  const entry=document.createElement('div');entry.className=`log-entry ${isHit?'log-hit':'log-ok'}`;
+  const tog=document.createElement('span');tog.className='log-tog';tog.textContent='▶';
+  const sumEl=document.createElement('div');sumEl.className='log-sum';sumEl.append(tog,document.createTextNode(summary));
+  const raw=document.createElement('pre');raw.className='log-raw';raw.textContent=(rawText||'').trim()||'(テキストなし)';
+  sumEl.addEventListener('click',()=>{const open=raw.style.display==='block';raw.style.display=open?'none':'block';tog.classList.toggle('open',!open);});
+  entry.append(sumEl,raw);logArea.prepend(entry);if(logArea.children.length>100)logArea.lastChild.remove();
+}
+function exportCSV(){
+  if(!logHistory.length){alert('ログがありません');return;}
+  const rows=logHistory.map(r=>{const txt=(r.rawText||'').replace(/"/g,'""').replace(/\n/g,' ').trim();return`"${r.ts}","${r.source||''}","${r.hits.join('/')}","${Math.round(r.confidence)}","${txt}"`;});
+  const csv='\uFEFF時刻,ソース,検出薬剤,信頼度(%),読み取りテキスト\n'+rows.join('\n');
+  const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`scan-log-${new Date().toISOString().slice(0,10)}.csv`});
+  a.click();URL.revokeObjectURL(a.href);
+}
+function clearLog(){logHistory.length=0;logArea.innerHTML='';}
+function downloadSelf(){const blob=new Blob([document.documentElement.outerHTML],{type:'text/html;charset=utf-8'});const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'kyuyaku-scanner.html'});a.click();URL.revokeObjectURL(a.href);}
+
+/* 起動 */
+switchMode('image');
+initWorker();
+</script>
+<script>
+if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(e=>console.log("SW:",e));});}
+</script>
+</body>
+</html>
