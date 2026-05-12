@@ -1343,7 +1343,14 @@ switchMode('image');
 initWorker();
 </script>
 <script>
-if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("sw.js").catch(e=>console.log("SW:",e));});}
+// 開発中のキャッシュ問題対策のため、Service Workerを強制解除します
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.getRegistrations().then(function(registrations) {
+    for(let registration of registrations) {
+      registration.unregister();
+    }
+  });
+}
 </script>
 </body>
 </html>
