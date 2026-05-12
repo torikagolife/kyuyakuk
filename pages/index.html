@@ -30,9 +30,18 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 .proc-btn.active{background:var(--accent);color:#fff;border-color:var(--acc2);box-shadow:0 0 10px rgba(14,165,233,.2);}
 
 /* TABS */
-.tabs{display:grid;grid-template-columns:1fr 1fr;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;}
+.tabs{display:grid;grid-template-columns:1fr 1fr 1fr;gap:4px;background:var(--panel);border:1px solid var(--border);border-radius:10px;padding:4px;}
 .tab-btn{padding:9px;border-radius:7px;border:none;font-family:var(--sans);font-size:13px;font-weight:700;cursor:pointer;background:transparent;color:var(--muted);transition:all .2s;}
 .tab-btn.active{background:var(--bord2);color:var(--text);}
+
+/* MANUAL MODE */
+.manual-wrap{background:var(--panel);border:1px solid var(--border);border-radius:12px;padding:12px;max-height:360px;overflow-y:auto;}
+.manual-cat{font-size:11px;font-family:var(--mono);color:var(--muted);margin:12px 0 6px;font-weight:700;border-bottom:1px solid var(--border);padding-bottom:3px;}
+.manual-cat:first-child{margin-top:0;}
+.manual-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:6px;}
+.manual-btn{padding:8px 10px;border-radius:8px;border:1px solid var(--bord2);background:#070d1a;color:var(--text);font-family:var(--sans);font-size:11px;cursor:pointer;transition:all .2s;text-align:left;line-height:1.4;}
+.manual-btn.selected{background:#0a2540;border-color:var(--accent);color:#fff;box-shadow:0 0 8px rgba(14,165,233,.3);}
+.manual-btn:active{transform:scale(0.97);}
 
 /* INIT OVERLAY */
 #initOverlay{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;}
@@ -219,7 +228,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 </head>
 <body>
 
-<!-- OCR初期化オーバーレイ -->
 <div id="initOverlay">
   <div class="spin"></div>
   <p id="initMsg">OCRエンジンを初期化中...</p>
@@ -239,7 +247,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 
 <div class="main">
 
-  <!-- PROCEDURE TABS -->
   <div class="proc-wrap">
     <h3>🔪 予定術式・処置を選択</h3>
     <div class="proc-tabs">
@@ -249,13 +256,12 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
     </div>
   </div>
 
-  <!-- TABS -->
   <div class="tabs">
     <button class="tab-btn active" id="tabVideo" onclick="switchMode('video')">📹 カメラスキャン</button>
     <button class="tab-btn"        id="tabImage" onclick="switchMode('image')">🖼 画像ファイル</button>
+    <button class="tab-btn"        id="tabManual" onclick="switchMode('manual')">👆 お薬手動選択</button>
   </div>
 
-  <!-- 動画モード -->
   <div id="videoMode">
     <div class="camera-wrap">
       <video id="video" autoplay playsinline muted></video>
@@ -293,7 +299,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
     </div>
   </div>
 
-  <!-- 画像モード -->
   <div id="imageMode" style="display:none">
     <div class="drop-zone" id="dropZone"
          onclick="document.getElementById('fileInput').click()"
@@ -315,14 +320,18 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
     </div>
   </div>
 
-  <!-- ALERT -->
+  <div id="manualMode" style="display:none">
+    <div class="manual-wrap" id="manualWrap">
+      </div>
+    <button class="ib ib-scan" style="width:100%; margin-top:10px; padding:14px; font-size:14px;" onclick="confirmManual()">✅ 選択したお薬をサマリーに追加</button>
+  </div>
+
   <div id="alertBanner">
     <h2>⚠️ 休薬対象薬剤を検出</h2>
     <div id="alertDrugs"></div>
   </div>
 
 
-  <!-- 休薬指導サマリー -->
   <div class="summary-panel" id="summaryPanel">
     <div class="summary-head">
       <h3>🏥 休薬指導一覧</h3>
@@ -346,7 +355,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
     </div>
   </div>
 
-  <!-- LOG -->
   <div class="panel">
     <div class="log-head">
       <h3>📋 スキャンログ</h3>
@@ -356,7 +364,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
     <div id="logArea"></div>
   </div>
 
-  <!-- DRUG LIST -->
   <div class="panel">
     <h3>🔴 休薬対象薬剤リスト（1行1薬剤・部分一致）</h3>
     <textarea id="drugListArea" spellcheck="false"># -- 抗血小板薬 --
@@ -610,9 +617,14 @@ function switchMode(mode){
   currentMode=mode;
   document.getElementById('tabVideo').classList.toggle('active',mode==='video');
   document.getElementById('tabImage').classList.toggle('active',mode==='image');
+  document.getElementById('tabManual').classList.toggle('active',mode==='manual');
   document.getElementById('videoMode').style.display=mode==='video'?'':'none';
   document.getElementById('imageMode').style.display=mode==='image'?'':'none';
-  const msg=workerReady?(mode==='video'?'スキャン開始ボタンを押してください':'画像を選択してください'):'OCR初期化中...';
+  document.getElementById('manualMode').style.display=mode==='manual'?'':'none';
+  let msg = '';
+  if(mode === 'video') msg = workerReady?'スキャン開始ボタンを押してください':'OCR初期化中...';
+  else if(mode === 'image') msg = workerReady?'画像を選択してください':'OCR初期化中...';
+  else if(mode === 'manual') msg = 'お薬をタップして選択してください';
   setHud('idle',msg);
 }
 
@@ -1130,12 +1142,65 @@ function exportSummaryCSV(){
 }
 
 /* ==========================================
-   休薬指導サマリー
+   手動選択 UI生成と処理
 ========================================== */
+function initManualMode() {
+  const wrap = document.getElementById('manualWrap');
+  wrap.innerHTML = '';
+  
+  // DRUG_DBをカテゴリごとにグループ化
+  const cats = {};
+  DRUG_DB.forEach(entry => {
+    if(!cats[entry.cat]) cats[entry.cat] = [];
+    cats[entry.cat].push(entry);
+  });
 
-// 薬剤マスタ：PDF「病院-薬剤-配-01/02」2025年2月版
+  for(const cat in cats){
+    const catDiv = document.createElement('div');
+    catDiv.className = 'manual-cat';
+    catDiv.textContent = '-- ' + cat + ' --';
+    wrap.appendChild(catDiv);
 
-// サマリーストア: { [normName]: {name, cat, period, count, sources:[]} }
+    const grid = document.createElement('div');
+    grid.className = 'manual-grid';
+    cats[cat].forEach(entry => {
+      const btn = document.createElement('button');
+      btn.className = 'manual-btn';
+      // 長いので商品名等スラッシュ区切りなどで表示
+      btn.innerHTML = entry.keys.join('<br>');
+      // データ属性に代表名（サマリー照合用）を持たせる
+      btn.dataset.drug = entry.keys[0];
+      btn.onclick = () => btn.classList.toggle('selected');
+      grid.appendChild(btn);
+    });
+    wrap.appendChild(grid);
+  }
+}
+
+function confirmManual() {
+  const selected = document.querySelectorAll('.manual-btn.selected');
+  if(selected.length === 0) return;
+
+  const hits = [];
+  const ts = new Date().toLocaleTimeString('ja-JP');
+  
+  selected.forEach(btn => {
+    const drugName = btn.dataset.drug;
+    hits.push(drugName);
+    addToSummary(drugName, '手動');
+    btn.classList.remove('selected'); // 選択状態を解除
+  });
+
+  showAlert(hits);
+  addLog(ts, hits, 100, '手動選択', '手動');
+  
+  // サマリーが見えるように少し下へスクロール
+  document.getElementById('summaryPanel').scrollIntoView({behavior: 'smooth', block: 'start'});
+}
+
+/* ==========================================
+   アラート・ログ系
+========================================== */
 /* アラート */
 function showAlert(drugs){
   const now=Date.now();if(now-lastAlertAt<ALERT_COOLDOWN_MS)return;
@@ -1184,6 +1249,7 @@ function clearLog(){logHistory.length=0;logArea.innerHTML='';}
 function downloadSelf(){const blob=new Blob([document.documentElement.outerHTML],{type:'text/html;charset=utf-8'});const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'kyuyaku-scanner.html'});a.click();URL.revokeObjectURL(a.href);}
 
 /* 起動 */
+initManualMode(); // 手動モードのUIを構築
 switchMode('image');
 initWorker();
 </script>
