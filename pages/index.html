@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
 <title>休薬スキャナー</title>
-<script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 <style>
 @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;700&family=Noto+Sans+JP:wght@400;700;900&display=swap');
 :root {
@@ -47,8 +46,6 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 #initOverlay{position:fixed;inset:0;z-index:200;background:var(--bg);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;}
 .spin{width:40px;height:40px;border:3px solid var(--bord2);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;}
 #initMsg{font-size:13px;color:var(--muted);}
-.init-bar-bg{width:200px;height:3px;background:var(--border);border-radius:2px;}
-.init-bar-fill{height:100%;width:0%;background:var(--accent);border-radius:2px;transition:width .3s;}
 
 /* CAMERA */
 .camera-wrap{position:relative;border-radius:12px;overflow:hidden;background:#000;border:1px solid var(--border);aspect-ratio:16/9;}
@@ -250,18 +247,13 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 
 <div id="initOverlay">
   <div class="spin"></div>
-  <p id="initMsg">OCRエンジンを初期化中...</p>
-  <div class="init-bar-bg"><div class="init-bar-fill" id="initBar"></div></div>
-  <p style="font-size:11px;color:#2a4a6a;margin-top:4px;text-align:center;max-width:280px;line-height:1.6">
-    初回のみ言語データをダウンロードします（jpn+eng 約30MB）<br>
-    2回目以降はオフライン動作します
-  </p>
+  <p id="initMsg">APIを準備中...</p>
 </div>
 
 <header>
   <span style="font-size:20px">💊</span>
   <h1>休薬スキャナー</h1>
-  <span class="badge">BETA</span>
+  <span class="badge">VISION API</span>
   <button id="btnDownload" onclick="downloadSelf()">⬇ 保存</button>
 </header>
 
@@ -291,7 +283,7 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
       </div>
       <div class="cam-hud">
         <div class="hud-dot" id="hudDot"></div>
-        <span class="hud-label" id="hudLabel">初期化完了後にスキャン開始できます</span>
+        <span class="hud-label" id="hudLabel">スキャン開始ボタンを押してください</span>
         <span class="hud-badge" id="hudBadge" style="display:none"></span>
       </div>
       <div class="cam-bottom" id="camBottom">
@@ -304,7 +296,7 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
       </div>
     </div>
     <div class="vid-ctrl">
-      <button class="vc vc-start" id="btnStart" onclick="startVideoMode()" disabled>⏳ 初期化中...</button>
+      <button class="vc vc-start" id="btnStart" onclick="startVideoMode()">📷 スキャン開始</button>
       <button class="vc vc-stop"  id="btnStop"  onclick="stopVideoMode()" style="display:none">⏹ 停止</button>
     </div>
     <div class="queue-panel" id="queuePanel" style="display:none">
@@ -473,14 +465,30 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 </div>
 
 <script>
+// ==========================================
+// ★ ここを自分のCloudflare Worker URLに変更してください ★
+// ==========================================
+const CF_WORKER_URL = 'https://kyuyaku-ocr.toriweb.workers.dev/';
+
+// Vision API通信関数
+async function recognizeAPI(dataUrl) {
+  const res = await fetch(CF_WORKER_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ image: dataUrl })
+  });
+  if (!res.ok) throw new Error(`APIエラー: ${res.status}`);
+  return await res.json();
+}
+
 const SCAN_INTERVAL_MS  = 900;
-const CONFIDENCE_MIN    = 30; // 30%以上は照合対象（ノイズはfuzzy側で弾く）
+const CONFIDENCE_MIN    = 30; 
 const ALERT_COOLDOWN_MS = 4000;
 
-let stream=null, scanning=false, worker=null, workerReady=false;
+let stream=null, scanning=false;
 let scanTimer=null, lastAlertAt=0, currentMode='video';
 let captureQueue=[], imageFiles=[], qIdSeed=0, iIdSeed=0;
-let currentProc = 'emr'; // 初期状態はポリープ切除・EMR
+let currentProc = 'emr'; 
 
 const video=document.getElementById('video'), canvas=document.getElementById('canvas'), ctx=canvas.getContext('2d');
 const hudDot=document.getElementById('hudDot'), hudLabel=document.getElementById('hudLabel'), hudBadge=document.getElementById('hudBadge');
@@ -493,136 +501,8 @@ const imgCtrl=document.getElementById('imgCtrl'), btnStart=document.getElementBy
 const btnShutter=document.getElementById('btnShutter'), btnScanQ=document.getElementById('btnScanQ');
 const camBottom=document.getElementById('camBottom'), scanGuide=document.getElementById('scanGuide'), scanLine=document.getElementById('scanLine');
 
-/* OCR初期化（起動時） */
-// -- IndexedDBキャッシュキー --
-const IDB_NAME    = 'kyuyaku-ocr-cache';
-const IDB_VERSION = 1;
-const IDB_STORE   = 'langdata';
-const LANG_FILES  = [
-  { key: 'jpn.traineddata', url: 'https://tessdata.projectnaptha.com/4.0.0/jpn.traineddata.gz' },
-  { key: 'eng.traineddata', url: 'https://tessdata.projectnaptha.com/4.0.0/eng.traineddata.gz' },
-];
-
-function openIDB(){
-  return new Promise((res,rej)=>{
-    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
-    req.onupgradeneeded = e => e.target.result.createObjectStore(IDB_STORE);
-    req.onsuccess = e => res(e.target.result);
-    req.onerror   = e => rej(e.target.error);
-  });
-}
-function idbGet(db, key){
-  return new Promise((res,rej)=>{
-    const req = db.transaction(IDB_STORE,'readonly').objectStore(IDB_STORE).get(key);
-    req.onsuccess = e => res(e.target.result);
-    req.onerror   = e => rej(e.target.error);
-  });
-}
-function idbPut(db, key, val){
-  return new Promise((res,rej)=>{
-    const req = db.transaction(IDB_STORE,'readwrite').objectStore(IDB_STORE).put(val, key);
-    req.onsuccess = e => res();
-    req.onerror   = e => rej(e.target.error);
-  });
-}
-
-async function fetchWithProgress(url, label, bar, msg, progStart, progEnd){
-  msg.textContent = label + ' をダウンロード中...';
-  const res = await fetch(url);
-  if(!res.ok) throw new Error(`HTTP ${res.status}: ${url}`);
-  const total = parseInt(res.headers.get('content-length') || '0');
-  const reader = res.body.getReader();
-  const chunks = [];
-  let received = 0;
-  while(true){
-    const {done, value} = await reader.read();
-    if(done) break;
-    chunks.push(value);
-    received += value.length;
-    if(total > 0){
-      const pct = progStart + (received / total) * (progEnd - progStart);
-      bar.style.width = Math.round(pct) + '%';
-    }
-  }
-  const blob = new Blob(chunks);
-  return await blob.arrayBuffer();
-}
-
-async function initWorker(){
-  const bar = document.getElementById('initBar');
-  const msg = document.getElementById('initMsg');
-  try{
-    const db = await openIDB();
-
-    // 言語データをIndexedDBから取得 or ダウンロード
-    const langBuffers = {};
-    for(let i=0; i<LANG_FILES.length; i++){
-      const {key, url} = LANG_FILES[i];
-      const progStart = i * 40;
-      const progEnd   = progStart + 40;
-      let buf = await idbGet(db, key);
-      if(buf){
-        msg.textContent = key.replace('.traineddata','') + ' (キャッシュ済み)';
-        bar.style.width = (progEnd) + '%';
-      } else {
-        msg.textContent = key.replace('.traineddata','') + ' を初回ダウンロード中...';
-        buf = await fetchWithProgress(url, key.replace('.traineddata',''), bar, msg, progStart, progEnd);
-        await idbPut(db, key, buf);
-        msg.textContent = key.replace('.traineddata','') + ' を保存しました';
-      }
-      langBuffers[key] = buf;
-    }
-
-    bar.style.width = '85%';
-    msg.textContent = 'OCRエンジンを起動中...';
-
-    // Workerに言語データをBlobとして渡す
-    const langPaths = {};
-    for(const [key, buf] of Object.entries(langBuffers)){
-      langPaths[key] = URL.createObjectURL(new Blob([buf]));
-    }
-
-    worker = await Tesseract.createWorker(['jpn','eng'], 1, {
-      workerPath:   'https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/worker.min.js',
-      corePath:     'https://cdn.jsdelivr.net/npm/tesseract.js-core@5/tesseract-core-simd-lstm.wasm.js',
-      langPath:     'https://tessdata.projectnaptha.com/4.0.0',
-      cacheMethod:  'none',
-      logger: m => {
-        if(m.status === 'recognizing text'){
-          // スキャン中の進捗は別途HUDで表示
-        }
-      }
-    });
-    await worker.setParameters({tessedit_pageseg_mode: Tesseract.PSM.AUTO});
-
-    // Blob URLを解放
-    Object.values(langPaths).forEach(u => URL.revokeObjectURL(u));
-
-    bar.style.width  = '100%';
-    workerReady      = true;
-    await new Promise(r => setTimeout(r, 300));
-    document.getElementById('initOverlay').style.display = 'none';
-    btnStart.disabled    = false;
-    btnStart.textContent = '📷 スキャン開始';
-    setHud('idle','スキャン開始ボタンを押してください');
-
-  } catch(e) {
-    const bar = document.getElementById('initBar');
-    const msg = document.getElementById('initMsg');
-    msg.textContent = '初期化失敗: ' + e.message;
-    // キャッシュが壊れている可能性 → クリアボタンを表示
-    const btn = document.createElement('button');
-    btn.textContent = '🗑 キャッシュをクリアして再試行';
-    btn.style.cssText = 'margin-top:12px;padding:8px 16px;border-radius:8px;border:1px solid #ef4444;background:transparent;color:#ef4444;cursor:pointer;font-size:13px;';
-    btn.onclick = async () => {
-      try{
-        indexedDB.deleteDatabase(IDB_NAME);
-        location.reload();
-      }catch(e2){ location.reload(); }
-    };
-    msg.insertAdjacentElement('afterend', btn);
-  }
-}
+// 初期化表示を消す（API呼び出しのみなので即時完了）
+document.getElementById('initOverlay').style.display = 'none';
 
 /* 術式切り替え */
 function switchProc(proc){
@@ -643,15 +523,18 @@ function switchMode(mode){
   document.getElementById('imageMode').style.display=mode==='image'?'':'none';
   document.getElementById('manualMode').style.display=mode==='manual'?'':'none';
   let msg = '';
-  if(mode === 'video') msg = workerReady?'スキャン開始ボタンを押してください':'OCR初期化中...';
-  else if(mode === 'image') msg = workerReady?'画像を選択してください':'OCR初期化中...';
+  if(mode === 'video') msg = 'スキャン開始ボタンを押してください';
+  else if(mode === 'image') msg = '画像を選択してください';
   else if(mode === 'manual') msg = 'お薬をタップして選択してください';
   setHud('idle',msg);
 }
 
 /* 動画 */
 async function startVideoMode(){
-  if(!workerReady)return;
+  if(CF_WORKER_URL === '<YOUR_CLOUDFLARE_WORKER_URL>') {
+    alert('コード内の CF_WORKER_URL が設定されていません！');
+    return;
+  }
   try{
     btnStart.disabled=true;
     setHud('active','カメラ起動中...');
@@ -677,17 +560,20 @@ function stopVideoMode(){
   setHud('idle','停止しました');
 }
 async function runVideoScan(){
-  if(!scanning||!workerReady)return;
+  if(!scanning)return;
   const t0=Date.now();
   try{
     canvas.width=video.videoWidth||640;canvas.height=video.videoHeight||480;
     ctx.drawImage(video,0,0);
     const rawUrl = canvas.toDataURL('image/jpeg', 0.92);
     const preUrl  = await preprocessImage(rawUrl);
-    const{data}=await worker.recognize(preUrl);
+    
+    // APIを呼び出す
+    const { text, confidence } = await recognizeAPI(preUrl);
+    
     hudBadge.style.display='';
-    hudBadge.textContent=`${Date.now()-t0}ms / 信頼度${Math.round(data.confidence)}%`;
-    if(data.confidence>=CONFIDENCE_MIN)checkDrugs(data.text||'',data.confidence,'動画');
+    hudBadge.textContent=`${Date.now()-t0}ms / Cloud Vision`;
+    if(confidence>=CONFIDENCE_MIN)checkDrugs(text||'',confidence,'動画');
   }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,'動画');}
   if(scanning)scanTimer=setTimeout(runVideoScan,SCAN_INTERVAL_MS);
 }
@@ -723,17 +609,17 @@ function renderQueue(){
 function removeFromQueue(id){captureQueue=captureQueue.filter(c=>c.id!==id);renderQueue();if(captureQueue.length===0)queuePanel.style.display='none';}
 function clearQueue(){captureQueue=[];qScroll.querySelectorAll('.thumb').forEach(el=>el.remove());renderQueue();queuePanel.style.display='none';}
 async function scanQueue(){
-  if(!workerReady||captureQueue.length===0)return;
+  if(captureQueue.length===0)return;
   btnScanQ.disabled=true;const total=captureQueue.length;
   for(let i=0;i<captureQueue.length;i++){
     const cap=captureQueue[i];
     setHud('active',`キャプチャ ${i+1}/${total} をスキャン中...`);
     try{
       const preUrl = await preprocessImage(cap.dataUrl);
-      const{data}=await worker.recognize(preUrl);
+      const { text, confidence } = await recognizeAPI(preUrl);
       cap.scanned=true;
       const el=qScroll.querySelector(`[data-id="${cap.id}"]`);if(el)el.classList.add('scanned');
-      checkDrugs(data.text||'',data.confidence,`キャプチャ#${i+1}`);
+      checkDrugs(text||'',confidence,`キャプチャ#${i+1}`);
     }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,`キャプチャ#${i+1}`);}
   }
   setHud('ok',`${total}枚のスキャン完了`);btnScanQ.disabled=false;
@@ -764,7 +650,7 @@ function renderImgGrid(){
 function removeImageFile(id){imageFiles=imageFiles.filter(f=>f.id!==id);renderImgGrid();if(imageFiles.length===0){imgGrid.style.display='none';imgCtrl.style.display='none';}}
 function clearImages(){imageFiles=[];imgGrid.innerHTML='';imgGrid.style.display='none';imgCtrl.style.display='none';imgProg.classList.remove('on');}
 async function scanImages(){
-  if(!workerReady||imageFiles.length===0)return;
+  if(imageFiles.length===0)return;
   const btn=document.getElementById('btnScanImgs');btn.disabled=true;
   imgProg.classList.add('on');const total=imageFiles.length;
   for(let i=0;i<imageFiles.length;i++){
@@ -773,10 +659,10 @@ async function scanImages(){
     imgProgFill.style.width=`${Math.round((i/total)*100)}%`;
     try{
       const preUrl = await preprocessImage(file.dataUrl);
-      const{data}=await worker.recognize(preUrl);
+      const { text, confidence } = await recognizeAPI(preUrl);
       file.scanned=true;
       const el=imgGrid.querySelector(`[data-id="${file.id}"]`);if(el)el.classList.add('scanned');
-      checkDrugs(data.text||'',data.confidence,`画像${i+1}`);
+      checkDrugs(text||'',confidence,`画像${i+1}`);
     }catch(e){addLog(new Date().toLocaleTimeString('ja-JP'),[],0,`エラー: ${e.message}`,`画像${i+1}`);}
   }
   imgProgFill.style.width='100%';imgProgLabel.textContent=`${total}枚のスキャン完了`;
@@ -855,7 +741,7 @@ async function preprocessImage(dataUrl) {
           d[px+3] = 255;
         }
         PRE_CTX.putImageData(imageData, 0, 0);
-        resolve(PRE_CANVAS.toDataURL('image/png'));
+        resolve(PRE_CANVAS.toDataURL('image/jpeg', 0.8)); // 転送量削減のためJPEG圧縮
       } catch(e) {
         console.warn('前処理失敗、元画像で続行:', e.message);
         resolve(dataUrl);
@@ -910,25 +796,17 @@ function maxErrors(nameLen){
 }
 
 function fuzzyIncludes(haystack, needle){
-  // Level1: 完全一致
   if(haystack.includes(needle)) return true;
-
   const nlen    = needle.length;
   const allowed = maxErrors(nlen);
-
-  // Level2: チャンク先頭マッチ（スペース混入対応・既存ロジック）
   if(nlen >= 4){
     const head = needle.slice(0, Math.ceil(nlen * 0.7));
     if(head.length >= 2 && haystack.includes(head)) return true;
   }
-
-  // Level3: スライディングウィンドウ編集距離マッチ
-  // （OCR誤認識：ワ→フ、ン→ソ、ー→一 などを吸収）
   if(allowed > 0){
     const winLen = nlen + allowed;
     for(let i = 0; i <= haystack.length - nlen + allowed; i++){
       const window = haystack.slice(i, i + winLen);
-      // ウィンドウ内の部分文字列と比較
       for(let wl = Math.max(1, nlen - allowed); wl <= Math.min(window.length, nlen + allowed); wl++){
         if(levenshtein(needle, window.slice(0, wl)) <= allowed) return true;
       }
@@ -939,9 +817,8 @@ function fuzzyIncludes(haystack, needle){
 
 function getDrugList(){return drugListArea.value.split('\n').map(s=>s.trim()).filter(s=>s.length>0&&!s.startsWith('#'));}
 
-// 信頼度の閾値定義
-const CONF_LOW  = 50;  // 50%未満: 読み取り不良（テキスト自体が怪しい）
-const CONF_MID  = 80;  // 80%未満: 要目視（オーナー指定）
+const CONF_LOW  = 50;  
+const CONF_MID  = 80;  
 
 function checkDrugs(text,confidence,source){
   if(confidence<CONFIDENCE_MIN)return;
@@ -963,7 +840,6 @@ function checkDrugs(text,confidence,source){
     showAlert(hits);
     addLog(ts,hits,confidence,text,source);
     hits.forEach(d=>addToSummary(d,source));
-    // 検出あり+低信頼度 → さらに目視を促す
     if(confidence < CONF_MID && source !== '動画'){
       setHud('alert', `⚠️ 検出あり・信頼度低(${Math.round(confidence)}%) 必ず目視確認してください`);
     }
@@ -971,11 +847,9 @@ function checkDrugs(text,confidence,source){
     addLog(ts,[],confidence,text,source);
     if(source !== '動画'){
       if(confidence < CONF_LOW){
-        // 読み取り不良
         setHud('warn', `⚠️ 読み取り不良(信頼度${Math.round(confidence)}%) 目視確認が必要です`);
         showVisualCheckWarning(source, confidence);
       } else if(confidence < CONF_MID){
-        // やや低信頼度
         setHud('warn', `👁 信頼度低め(${Math.round(confidence)}%) 目視で確認してください`);
       } else {
         setHud('ok', `✅ 該当薬剤なし (信頼度${Math.round(confidence)}%) ※必ず目視確認を`);
@@ -989,7 +863,6 @@ function checkDrugs(text,confidence,source){
   }
 }
 
-// 目視確認アラートをログに追記
 function showVisualCheckWarning(source, confidence){
   const ts = new Date().toLocaleTimeString('ja-JP');
   const entry = document.createElement('div');
@@ -1002,13 +875,7 @@ function showVisualCheckWarning(source, confidence){
   logArea.prepend(entry);
 }
 
-
-/* ================================================
-   休薬指導サマリー
-   summaryMap: { 正規化薬剤名 → {name, category, restPeriod, note, sources:Set, count} }
-   ================================================ */
-
-// 休薬期間DB（術式ごとの期間 periods: { emr, esd, ercp } を設定）
+// 休薬期間DB
 const DRUG_DB = [
   // 抗血小板薬
   {keys:['バイアスピリン','アスピリン'],          cat:'抗血小板薬', periods:{emr:'休薬不要(継続)', esd:'3〜5日', ercp:'3〜5日'},      note:'※目安。院内規定に調整してください'},
@@ -1054,7 +921,6 @@ const DRUG_DB = [
   {keys:['マーベロン','ファボワール','シンフェーズ'],                                 cat:'女性ホルモン製剤', periods:{emr:'術前4週・術後2週', esd:'術前4週・術後2週', ercp:'術前4週・術後2週'}, note:'血栓症リスク'},
 ];
 
-// 薬剤名→DBエントリを引く
 function lookupDrug(drugName){
   const nd = normalizeOCR(drugName);
   for(const entry of DRUG_DB){
@@ -1067,7 +933,6 @@ function lookupDrug(drugName){
   return null;
 }
 
-// サマリーマップ: key=正規化名, value={displayName, entry, sources, count}
 const summaryMap = new Map();
 
 function addToSummary(drugName, source){
@@ -1108,7 +973,6 @@ function renderSummary(){
   empty.style.display = 'none';
   table.style.display = '';
 
-  // カテゴリ順でソート
   const catOrder = ['抗血小板薬','抗凝固薬','PG製剤','EPA製剤','血管拡張薬','冠血管拡張薬','脳代謝改善薬','飲酒量低減薬','女性ホルモン製剤'];
   const sorted = [...summaryMap.values()].sort((a,b)=>{
     const ai = catOrder.indexOf(a.entry?.cat||'');
@@ -1121,7 +985,6 @@ function renderSummary(){
   let lastCat = '';
   sorted.forEach(rec => {
     const cat = rec.entry?.cat || '不明';
-    // カテゴリ区切り行
     if(cat !== lastCat){
       const sep = document.createElement('tr');
       sep.innerHTML = `<td colspan="4" style="background:#070d1a;color:var(--muted);font-size:9px;font-family:var(--mono);padding:4px 10px;letter-spacing:.08em;font-weight:700;">-- ${cat} --</td>`;
@@ -1130,7 +993,6 @@ function renderSummary(){
     }
     const tr = document.createElement('tr');
     const srcs = [...rec.sources].map(s=>`<span class="src-tag hit">${s}</span>`).join('');
-    // 選択された術式に応じた期間を取得
     const period = rec.entry?.periods?.[currentProc] || '—';
     const note   = rec.entry?.note   || '';
     tr.innerHTML = `
@@ -1230,14 +1092,10 @@ function printSummary() {
   window.print();
 }
 
-/* ==========================================
-   手動選択 UI生成と処理
-========================================== */
 function initManualMode() {
   const wrap = document.getElementById('manualWrap');
   wrap.innerHTML = '';
   
-  // DRUG_DBをカテゴリごとにグループ化
   const cats = {};
   DRUG_DB.forEach(entry => {
     if(!cats[entry.cat]) cats[entry.cat] = [];
@@ -1255,9 +1113,7 @@ function initManualMode() {
     cats[cat].forEach(entry => {
       const btn = document.createElement('button');
       btn.className = 'manual-btn';
-      // 長いので商品名等スラッシュ区切りなどで表示
       btn.innerHTML = entry.keys.join('<br>');
-      // データ属性に代表名（サマリー照合用）を持たせる
       btn.dataset.drug = entry.keys[0];
       btn.onclick = () => btn.classList.toggle('selected');
       grid.appendChild(btn);
@@ -1277,20 +1133,15 @@ function confirmManual() {
     const drugName = btn.dataset.drug;
     hits.push(drugName);
     addToSummary(drugName, '手動');
-    btn.classList.remove('selected'); // 選択状態を解除
+    btn.classList.remove('selected'); 
   });
 
   showAlert(hits);
   addLog(ts, hits, 100, '手動選択', '手動');
   
-  // サマリーが見えるように少し下へスクロール
   document.getElementById('summaryPanel').scrollIntoView({behavior: 'smooth', block: 'start'});
 }
 
-/* ==========================================
-   アラート・ログ系
-========================================== */
-/* アラート */
 function showAlert(drugs){
   const now=Date.now();if(now-lastAlertAt<ALERT_COOLDOWN_MS)return;
   lastAlertAt=now;alertBanner.style.display='';
@@ -1300,26 +1151,23 @@ function showAlert(drugs){
   setTimeout(()=>{alertBanner.style.display='none';if(scanning)setHud('active','スキャン中...');},6000);
 }
 
-/* HUD */
 function setHud(type,msg){
   hudDot.className=`hud-dot ${type}`;
   hudLabel.textContent=msg;
-  // warnは背景色も変える
   const hud = document.querySelector('.cam-hud');
   if(hud) hud.style.background = type==='warn'
     ? 'linear-gradient(to bottom,rgba(120,80,0,0.85) 0%,transparent 100%)'
     : 'linear-gradient(to bottom,rgba(0,0,0,0.72) 0%,transparent 100%)';
 }
 
-/* ログ */
 const logHistory=[];
 function addLog(ts,hits,confidence,rawText,source,isBad=false){
   logHistory.unshift({ts,hits,confidence,rawText,source});if(logHistory.length>200)logHistory.pop();
   const isHit=hits.length>0,label=source?`[${source}] `:'';
   const okIcon  = isBad ? '⚠️ 要目視' : '👁 要目視確認';
   const summary=isHit
-    ? `[${ts}] ${label}🚨 検出: ${hits.join(', ')} (信頼度${Math.round(confidence)}%)`
-    : `[${ts}] ${label}${okIcon} (信頼度${Math.round(confidence)}%)`;
+    ? `[${ts}] ${label}🚨 検出: ${hits.join(', ')}`
+    : `[${ts}] ${label}${okIcon}`;
   const entry=document.createElement('div');entry.className=`log-entry ${isHit?'log-hit':'log-ok'}`;
   const tog=document.createElement('span');tog.className='log-tog';tog.textContent='▶';
   const sumEl=document.createElement('div');sumEl.className='log-sum';sumEl.append(tog,document.createTextNode(summary));
@@ -1337,13 +1185,9 @@ function exportCSV(){
 function clearLog(){logHistory.length=0;logArea.innerHTML='';}
 function downloadSelf(){const blob=new Blob([document.documentElement.outerHTML],{type:'text/html;charset=utf-8'});const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(blob),download:'kyuyaku-scanner.html'});a.click();URL.revokeObjectURL(a.href);}
 
-/* 起動 */
-initManualMode(); // 手動モードのUIを構築
+initManualMode(); 
 switchMode('image');
-initWorker();
-</script>
-<script>
-// 開発中のキャッシュ問題対策のため、Service Workerを強制解除します
+
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.getRegistrations().then(function(registrations) {
     for(let registration of registrations) {
