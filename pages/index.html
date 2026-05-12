@@ -152,6 +152,8 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 .sbtn-csv:hover{background:#1d4ed8;color:#fff;}
 .sbtn-clear{background:transparent;color:var(--muted);border:1px solid var(--border);}
 .sbtn-clear:hover{color:var(--danger);border-color:var(--danger);}
+.sbtn-print{background:#0a2540;color:#2dd4bf;border:1px solid #14b8a6;}
+.sbtn-print:hover{background:#0f766e;color:#fff;}
 .sum-empty{padding:24px;text-align:center;font-size:12px;color:var(--muted);}
 .sum-table{width:100%;border-collapse:collapse;font-size:12px;}
 .sum-table thead th{background:#0a1829;color:var(--muted);font-size:10px;font-weight:700;padding:7px 10px;text-align:left;border-bottom:1px solid var(--border);letter-spacing:.05em;}
@@ -219,6 +221,22 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 .src-tag{background:var(--border);color:var(--muted);font-size:9px;font-family:var(--mono);padding:1px 5px;border-radius:3px;}
 .src-tag.hit{background:#0a2540;color:var(--accent);}
 .hit-count-badge{background:var(--danger);color:#fff;font-size:9px;font-family:var(--mono);padding:1px 6px;border-radius:8px;font-weight:700;}
+
+/* PRINT STYLES */
+#printArea { display: none; }
+@media print {
+  body * { visibility: hidden; }
+  body { background: #fff !important; }
+  #printArea, #printArea * { visibility: visible; }
+  #printArea { display: block; position: absolute; left: 0; top: 0; width: 100%; color: #000; font-family: sans-serif; }
+  #printArea h1 { font-size: 16pt; text-align: center; border-bottom: 2px solid #000; padding-bottom: 10px; margin-bottom: 20px; }
+  #printArea table { width: 100%; border-collapse: collapse; margin-bottom: 20px; font-size: 11pt; }
+  #printArea th, #printArea td { border: 1px solid #000; padding: 10px; text-align: left; vertical-align: middle; }
+  #printArea th { background-color: #f0f0f0 !important; -webkit-print-color-adjust: exact; print-color-adjust: exact; font-weight: bold; }
+  #printArea .note-box { border: 2px solid #000; padding: 15px; margin-bottom: 20px; font-size: 10.5pt; line-height: 1.6; }
+  #printArea .footer { text-align: right; font-size: 12pt; font-weight: bold; margin-top: 30px; }
+  @page { size: A4 portrait; margin: 15mm; }
+}
 </style>
 <link rel="manifest" href="manifest.json">
 <meta name="theme-color" content="#070d1a">
@@ -227,6 +245,8 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
 <meta name="apple-mobile-web-app-title" content="休薬スキャナー">
 </head>
 <body>
+
+<div id="printArea"></div>
 
 <div id="initOverlay">
   <div class="spin"></div>
@@ -338,6 +358,7 @@ header h1{font-size:15px;font-weight:900;flex:1;color:var(--acc2);letter-spacing
       <span class="sum-count zero" id="sumCount">0</span>
       <button class="sbtn sbtn-csv" onclick="exportSummaryCSV()">⬇ CSV</button>
       <button class="sbtn sbtn-clear" onclick="clearSummary()">クリア</button>
+      <button class="sbtn sbtn-print" onclick="printSummary()">🖨 印刷</button>
     </div>
     <div id="sumBody">
       <div class="sum-empty" id="sumEmpty">スキャン後に検出された薬剤がここにまとまります</div>
@@ -1139,6 +1160,74 @@ function exportSummaryCSV(){
   const csv='\ufeff薬品名,分類,休薬期間目安,備考,検出回数,検出元\n'+rows.join('\n');
   const a=Object.assign(document.createElement('a'),{href:URL.createObjectURL(new Blob([csv],{type:'text/csv;charset=utf-8'})),download:`休薬指導一覧-${new Date().toISOString().slice(0,10)}.csv`});
   a.click();URL.revokeObjectURL(a.href);
+}
+
+function printSummary() {
+  if(summaryMap.size === 0) { alert('印刷するデータがありません'); return; }
+
+  const printArea = document.getElementById('printArea');
+  const procBtn = document.querySelector('.proc-btn.active');
+  const procName = procBtn ? procBtn.innerHTML.replace('<br>', ' ') : '';
+  const dateStr = new Date().toLocaleDateString('ja-JP');
+
+  let tbodyHtml = '';
+  const catOrder = ['抗血小板薬','抗凝固薬','PG製剤','EPA製剤','血管拡張薬','冠血管拡張薬','脳代謝改善薬','飲酒量低減薬','女性ホルモン製剤'];
+  const sorted = [...summaryMap.values()].sort((a,b)=>{
+    const ai = catOrder.indexOf(a.entry?.cat||'');
+    const bi = catOrder.indexOf(b.entry?.cat||'');
+    if(ai !== bi) return (ai<0?99:ai) - (bi<0?99:bi);
+    return a.displayName.localeCompare(b.displayName, 'ja');
+  });
+
+  let lastCat = '';
+  sorted.forEach(rec => {
+    const cat = rec.entry?.cat || '不明';
+    if(cat !== lastCat){
+      tbodyHtml += `<tr><td colspan="3" style="background-color:#e2e8f0; font-weight:bold; text-align:center; padding:4px;">-- ${cat} --</td></tr>`;
+      lastCat = cat;
+    }
+    const period = rec.entry?.periods?.[currentProc] || '—';
+    const note   = rec.entry?.note   || '';
+    tbodyHtml += `
+      <tr>
+        <td style="font-weight:bold;">${rec.displayName}</td>
+        <td>${period}</td>
+        <td style="font-size:9pt;">${note}</td>
+      </tr>`;
+  });
+
+  printArea.innerHTML = `
+    <h1>XXXX総合病院内視鏡センター 休薬指導確認表</h1>
+    <div style="display:flex; justify-content:space-between; margin-bottom:10px; font-size:11pt;">
+      <span>予定術式・処置： <strong>${procName}</strong></span>
+      <span>作成日： ${dateStr}</span>
+    </div>
+    <table>
+      <thead>
+        <tr>
+          <th style="width:35%;">薬品名</th>
+          <th style="width:30%;">休薬期間の目安</th>
+          <th style="width:35%;">備考</th>
+        </tr>
+      </thead>
+      <tbody>
+        ${tbodyHtml}
+      </tbody>
+    </table>
+    <div class="note-box">
+      <strong style="font-size:12pt;">【サプリメント等の注意事項】</strong><br>
+      <div style="margin-top:8px;">
+        DHA、EPA、イチョウ葉エキス、ナットウキナーゼ、ビタミンEなど、血液をサラサラにする効果があるサプリメントや健康食品については、出血リスクを高める可能性があるため、検査・治療の<strong>7日前</strong>から摂取を中止してください。<br>
+        ご不明な点がある場合は、事前に当センターまでお問い合わせください。
+      </div>
+    </div>
+    <div class="footer">
+      XXXX総合病院内視鏡センター<br>
+      TEL：03-XXXX-XXXX
+    </div>
+  `;
+
+  window.print();
 }
 
 /* ==========================================
